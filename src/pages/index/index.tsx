@@ -1,0 +1,290 @@
+import { useEffect, useState } from 'react'
+import { Button, Input, Text, View } from '@tarojs/components'
+import './index.scss'
+
+type Screen = 'home' | 'camera' | 'captureResult' | 'match' | 'manualPick' | 'confirm'
+type ClothingCategory = 'top' | 'bottom' | 'dress' | 'set'
+
+type ClothingItem = {
+  id: number
+  label: string
+  tone: string
+  category: ClothingCategory
+}
+
+const clothingCategories: { key: ClothingCategory, label: string }[] = [
+  { key: 'top', label: '上衣' },
+  { key: 'bottom', label: '下衣' },
+  { key: 'dress', label: '连衣裙' },
+  { key: 'set', label: '套装' }
+]
+
+const clothingItems: ClothingItem[] = [
+  { id: 1, label: '上衣1', tone: 'tone-1', category: 'top' },
+  { id: 2, label: '上衣2', tone: 'tone-2', category: 'top' },
+  { id: 3, label: '上衣3', tone: 'tone-3', category: 'top' },
+  { id: 4, label: '下衣1', tone: 'tone-4', category: 'bottom' },
+  { id: 5, label: '下衣2', tone: 'tone-5', category: 'bottom' },
+  { id: 6, label: '连衣裙1', tone: 'tone-6', category: 'dress' },
+  { id: 7, label: '连衣裙2', tone: 'tone-1', category: 'dress' },
+  { id: 8, label: '套装1', tone: 'tone-2', category: 'set' },
+  { id: 9, label: '套装2', tone: 'tone-3', category: 'set' }
+]
+
+const recommendationItems: ClothingItem[] = [
+  { id: 101, label: '推荐1', tone: 'tone-4', category: 'bottom' },
+  { id: 102, label: '推荐2', tone: 'tone-5', category: 'top' },
+  { id: 103, label: '推荐3', tone: 'tone-6', category: 'set' }
+]
+
+export default function Index () {
+  const [screen, setScreen] = useState<Screen>('home')
+  const [isRecording, setIsRecording] = useState(false)
+  const [selectedItem, setSelectedItem] = useState<ClothingItem | null>(null)
+  const [selectedRecommendation, setSelectedRecommendation] = useState<ClothingItem | null>(null)
+  const [matchCategory, setMatchCategory] = useState<ClothingCategory>('top')
+  const [manualPickCategory, setManualPickCategory] = useState<ClothingCategory>('bottom')
+  const [note, setNote] = useState('')
+  const matchItems = clothingItems.filter(item => item.category === matchCategory)
+  const manualPickItems = clothingItems.filter(item => item.category === manualPickCategory)
+
+  useEffect(() => {
+    if (!isRecording) return
+
+    const timer = setTimeout(() => {
+      resetToHome()
+    }, 3000)
+
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [isRecording])
+
+  function resetToHome () {
+    setScreen('home')
+    setIsRecording(false)
+    setSelectedItem(null)
+    setSelectedRecommendation(null)
+    setMatchCategory('top')
+    setManualPickCategory('bottom')
+    setNote('')
+  }
+
+  function handlePickItem (item: ClothingItem) {
+    setSelectedItem(item)
+    setManualPickCategory(getManualPickDefaultCategory(item.category))
+  }
+
+  function handlePickRecommendation (item: ClothingItem) {
+    setSelectedRecommendation(item)
+    setScreen('confirm')
+  }
+
+  function handlePickManualItem (item: ClothingItem) {
+    if (selectedItem?.id === item.id) return
+
+    setSelectedRecommendation({ id: item.id, label: `自选${item.id}`, tone: item.tone, category: item.category })
+    setScreen('confirm')
+  }
+
+  function handleChangeMatchCategory (category: ClothingCategory) {
+    setMatchCategory(category)
+    setSelectedItem(null)
+    setSelectedRecommendation(null)
+  }
+
+  function getManualPickDefaultCategory (category: ClothingCategory): ClothingCategory {
+    if (category === 'top') return 'bottom'
+    return 'top'
+  }
+
+  function renderCategoryTabs (
+    activeCategory: ClothingCategory,
+    onChange: (category: ClothingCategory) => void
+  ) {
+    return (
+      <View className='category-tabs'>
+        {clothingCategories.map(category => (
+          <View
+            key={category.key}
+            className={`category-tab ${activeCategory === category.key ? 'is-active' : ''}`}
+            onTap={() => onChange(category.key)}
+          >
+            <Text>{category.label}</Text>
+          </View>
+        ))}
+      </View>
+    )
+  }
+
+  function renderClothingCard (item: ClothingItem, size: 'grid' | 'result' | 'recommend' | 'pair' = 'grid') {
+    const isSelected = selectedItem?.id === item.id
+
+    return (
+      <View className={`clothing-card clothing-card--${size} ${item.tone} ${isSelected ? 'is-selected' : ''}`}>
+        <View className='clothing-card__hanger' />
+        <View className='clothing-card__body'>
+          <View className='clothing-card__neck' />
+        </View>
+        <Text className='clothing-card__label'>{item.label}</Text>
+      </View>
+    )
+  }
+
+  return (
+    <View className='prototype'>
+      {screen === 'home' && (
+        <View className='home screen'>
+          <View className='home__header'>
+            <Text className='eyebrow'>进货搭配测试原型</Text>
+            <Text className='title'>今天要做什么？</Text>
+          </View>
+
+          <View className='home__actions'>
+            <Button className='action-card action-card--camera' onTap={() => setScreen('camera')}>
+              <Text className='action-card__icon'>CAM</Text>
+              <Text className='action-card__title'>拍新衣服</Text>
+              <Text className='action-card__hint'>模拟拍照并记录新货</Text>
+            </Button>
+
+            <Button className='action-card action-card--match' onTap={() => setScreen('match')}>
+              <Text className='action-card__icon'>SET</Text>
+              <Text className='action-card__title'>搭衣服</Text>
+              <Text className='action-card__hint'>选择单品查看推荐</Text>
+            </Button>
+          </View>
+        </View>
+      )}
+
+      {screen === 'camera' && (
+        <View className='camera screen'>
+          <View className='topbar'>
+            <Button className='plain-button' onTap={resetToHome}>返回</Button>
+          </View>
+          <View className='camera-box'>
+            <View className='camera-icon'>
+              <View className='camera-icon__lens' />
+            </View>
+            <Text className='title'>模拟拍照</Text>
+            <Text className='subtext'>这里不会调用真实相机，只用于测试流程。</Text>
+          </View>
+          <Button className='primary-button' onTap={() => setScreen('captureResult')}>拍照</Button>
+        </View>
+      )}
+
+      {screen === 'captureResult' && (
+        <View className='capture screen'>
+          <View className='topbar'>
+            <Button className='plain-button' onTap={resetToHome}>返回</Button>
+          </View>
+          <View className='capture__content'>
+            {renderClothingCard({ id: 0, label: '拍照结果', tone: 'tone-2', category: 'top' }, 'result')}
+            {isRecording && <Text className='recording-tip'>正在录音...</Text>}
+          </View>
+          <View className='bottom-actions'>
+            <Button className='secondary-button' onTap={() => setIsRecording(true)}>加语音笔记</Button>
+            <Button className='primary-button' onTap={resetToHome}>完成</Button>
+          </View>
+        </View>
+      )}
+
+      {screen === 'match' && (
+        <View className='match screen'>
+          <View className='match__header'>
+            <Button className='plain-button' onTap={resetToHome}>返回</Button>
+            <Text className='screen-title'>选择要搭配的单品</Text>
+          </View>
+          {renderCategoryTabs(matchCategory, handleChangeMatchCategory)}
+
+          <View className={`match__workspace ${selectedItem ? 'has-panel' : ''}`}>
+            <View className='grid'>
+              {matchItems.map(item => (
+                <View key={item.id} className='grid__cell' onTap={() => handlePickItem(item)}>
+                  {renderClothingCard(item)}
+                </View>
+              ))}
+            </View>
+
+            <View className={`recommend-panel ${selectedItem ? 'is-open' : ''}`}>
+              <Text className='recommend-panel__title'>推荐搭配</Text>
+              <Text className='recommend-panel__hint'>点击一个推荐单品继续</Text>
+              <View className='recommend-list'>
+                {recommendationItems.map(item => (
+                  <View key={item.id} className='recommend-list__item' onTap={() => handlePickRecommendation(item)}>
+                    {renderClothingCard(item, 'recommend')}
+                  </View>
+                ))}
+              </View>
+              <Button
+                className='manual-pick-button'
+                disabled={!selectedItem}
+                onTap={() => setScreen('manualPick')}
+              >
+                自己选一件
+              </Button>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {screen === 'manualPick' && selectedItem && (
+        <View className='manual-pick screen'>
+          <View className='match__header'>
+            <Button className='plain-button' onTap={() => setScreen('match')}>返回</Button>
+            <Text className='screen-title'>选择另一件搭配单品</Text>
+          </View>
+          {renderCategoryTabs(manualPickCategory, setManualPickCategory)}
+
+          <View className='manual-pick__selected'>
+            <Text className='manual-pick__label'>当前已选</Text>
+            <Text className='manual-pick__name'>{selectedItem.label}</Text>
+          </View>
+
+          <View className='grid manual-pick__grid'>
+            {manualPickItems.map(item => {
+              const isCurrentItem = selectedItem.id === item.id
+
+              return (
+                <View
+                  key={item.id}
+                  className={`grid__cell ${isCurrentItem ? 'is-disabled' : ''}`}
+                  onTap={() => handlePickManualItem(item)}
+                >
+                  {renderClothingCard(item)}
+                </View>
+              )
+            })}
+          </View>
+        </View>
+      )}
+
+      {screen === 'confirm' && selectedItem && selectedRecommendation && (
+        <View className='confirm screen'>
+          <View className='topbar'>
+            <Button className='plain-button' onTap={() => setScreen('match')}>返回</Button>
+          </View>
+          <View className='confirm__header'>
+            <Text className='title'>确认这组搭配</Text>
+            <Text className='subtext'>用于用户测试的模拟保存流程</Text>
+          </View>
+
+          <View className='pair-row'>
+            {renderClothingCard(selectedItem, 'pair')}
+            <Text className='pair-row__plus'>+</Text>
+            {renderClothingCard(selectedRecommendation, 'pair')}
+          </View>
+
+          <View className='confirm__form'>
+            <Input
+              className='note-input'
+              value={note}
+              placeholder='补充说明（可选）'
+              onInput={event => setNote(event.detail.value)}
+            />
+            <Button className='primary-button' onTap={resetToHome}>保存</Button>
+          </View>
+        </View>
+      )}
+    </View>
+  )
+}
