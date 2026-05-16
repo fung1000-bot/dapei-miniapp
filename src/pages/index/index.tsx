@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, Input, Text, View } from '@tarojs/components'
+import Taro from '@tarojs/taro'
 import './index.scss'
 
 type Screen = 'home' | 'camera' | 'captureResult' | 'match' | 'manualPick' | 'confirm'
 type ClothingCategory = 'top' | 'bottom' | 'dress' | 'set'
+type RecordState = 'idle' | 'recording' | 'done'
 
 type ClothingItem = {
   id: number
@@ -39,35 +41,35 @@ const recommendationItems: ClothingItem[] = [
 
 export default function Index () {
   const [screen, setScreen] = useState<Screen>('home')
-  const [isRecording, setIsRecording] = useState(false)
   const [selectedItem, setSelectedItem] = useState<ClothingItem | null>(null)
   const [selectedRecommendation, setSelectedRecommendation] = useState<ClothingItem | null>(null)
   const [matchCategory, setMatchCategory] = useState<ClothingCategory>('top')
   const [manualPickCategory, setManualPickCategory] = useState<ClothingCategory>('bottom')
   const [note, setNote] = useState('')
+  const [recordState, setRecordState] = useState<RecordState>('idle')
+  const [recordSeconds, setRecordSeconds] = useState(0)
+  const [showGuideButtons, setShowGuideButtons] = useState(false)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const analysisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const matchItems = clothingItems.filter(item => item.category === matchCategory)
   const manualPickItems = clothingItems.filter(item => item.category === manualPickCategory)
 
   useEffect(() => {
-    if (!isRecording) return
-
-    const timer = setTimeout(() => {
-      resetToHome()
-    }, 3000)
-
     return () => {
-      clearTimeout(timer)
+      clearRecordTimers()
     }
-  }, [isRecording])
+  }, [])
 
   function resetToHome () {
     setScreen('home')
-    setIsRecording(false)
     setSelectedItem(null)
     setSelectedRecommendation(null)
     setMatchCategory('top')
     setManualPickCategory('bottom')
     setNote('')
+    resetVoiceDemo()
   }
 
   function handlePickItem (item: ClothingItem) {
@@ -77,6 +79,7 @@ export default function Index () {
 
   function handlePickRecommendation (item: ClothingItem) {
     setSelectedRecommendation(item)
+    resetVoiceDemo()
     setScreen('confirm')
   }
 
@@ -84,6 +87,7 @@ export default function Index () {
     if (selectedItem?.id === item.id) return
 
     setSelectedRecommendation({ id: item.id, label: `自选${item.id}`, tone: item.tone, category: item.category })
+    resetVoiceDemo()
     setScreen('confirm')
   }
 
@@ -96,6 +100,88 @@ export default function Index () {
   function getManualPickDefaultCategory (category: ClothingCategory): ClothingCategory {
     if (category === 'top') return 'bottom'
     return 'top'
+  }
+
+  function clearRecordTimers () {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current)
+      recordTimerRef.current = null
+    }
+
+    if (guideTimerRef.current) {
+      clearTimeout(guideTimerRef.current)
+      guideTimerRef.current = null
+    }
+
+    if (analysisTimerRef.current) {
+      clearTimeout(analysisTimerRef.current)
+      analysisTimerRef.current = null
+    }
+  }
+
+  function resetVoiceDemo () {
+    clearRecordTimers()
+    setRecordState('idle')
+    setRecordSeconds(0)
+    setShowGuideButtons(false)
+    setIsAnalyzing(false)
+  }
+
+  function formatRecordTime (seconds: number) {
+    const minutesText = String(Math.floor(seconds / 60)).padStart(2, '0')
+    const secondsText = String(seconds % 60).padStart(2, '0')
+
+    return `${minutesText}:${secondsText}`
+  }
+
+  function handleRecordButtonTap () {
+    if (recordState === 'recording') {
+      finishVoiceDemo()
+      return
+    }
+
+    startVoiceDemo()
+  }
+
+  function startVoiceDemo () {
+    clearRecordTimers()
+    setRecordState('recording')
+    setRecordSeconds(0)
+    setShowGuideButtons(false)
+    setIsAnalyzing(false)
+
+    recordTimerRef.current = setInterval(() => {
+      setRecordSeconds(seconds => seconds + 1)
+    }, 1000)
+
+    guideTimerRef.current = setTimeout(() => {
+      setShowGuideButtons(true)
+    }, 5000)
+  }
+
+  function finishVoiceDemo () {
+    clearRecordTimers()
+    setRecordState('done')
+    setShowGuideButtons(false)
+    setIsAnalyzing(true)
+
+    analysisTimerRef.current = setTimeout(() => {
+      setIsAnalyzing(false)
+      analysisTimerRef.current = null
+    }, 1000)
+  }
+
+  function showDemoToast (title: string) {
+    Taro.showToast({
+      title,
+      icon: 'none',
+      duration: 1400
+    })
+  }
+
+  function handleBackToMatch () {
+    resetVoiceDemo()
+    setScreen('match')
   }
 
   function renderCategoryTabs (
@@ -179,12 +265,8 @@ export default function Index () {
           </View>
           <View className='capture__content'>
             {renderClothingCard({ id: 0, label: '拍照结果', tone: 'tone-2', category: 'top' }, 'result')}
-            {isRecording && <Text className='recording-tip'>正在录音...</Text>}
           </View>
-          <View className='bottom-actions'>
-            <Button className='secondary-button' onTap={() => setIsRecording(true)}>加语音笔记</Button>
-            <Button className='primary-button' onTap={resetToHome}>完成</Button>
-          </View>
+          <Button className='primary-button' onTap={resetToHome}>完成</Button>
         </View>
       )}
 
@@ -261,7 +343,7 @@ export default function Index () {
       {screen === 'confirm' && selectedItem && selectedRecommendation && (
         <View className='confirm screen'>
           <View className='topbar'>
-            <Button className='plain-button' onTap={() => setScreen('match')}>返回</Button>
+            <Button className='plain-button' onTap={handleBackToMatch}>返回</Button>
           </View>
           <View className='confirm__header'>
             <Text className='title'>确认这组搭配</Text>
@@ -281,7 +363,62 @@ export default function Index () {
               placeholder='补充说明（可选）'
               onInput={event => setNote(event.detail.value)}
             />
-            <Button className='primary-button' onTap={resetToHome}>保存</Button>
+            <View className={`voice-demo-card voice-demo-card--${recordState}`}>
+              <Text className='voice-demo-badge'>演示版</Text>
+              <Text className='voice-demo-title'>
+                {recordState === 'recording' ? '模拟录音中...' : isAnalyzing ? '模拟分析中...' : recordState === 'done' ? '已生成搭配思路' : '点击模拟录音（演示版）'}
+              </Text>
+              {recordState === 'recording' && (
+                <Text className='voice-demo-timer'>{formatRecordTime(recordSeconds)}</Text>
+              )}
+              <Button
+                className={`voice-demo-record-button ${recordState === 'recording' ? 'is-recording' : ''}`}
+                onTap={handleRecordButtonTap}
+              >
+                {recordState === 'recording' ? '⏹️' : '🎤'}
+              </Button>
+              {recordState === 'idle' && (
+                <Text className='voice-demo-hint'>这是交互演示，不会真的录音</Text>
+              )}
+              {recordState === 'recording' && showGuideButtons && (
+                <View className='voice-guide-row'>
+                  <Button className='voice-guide-button' onTap={() => showDemoToast('已记录：通勤')}>适合什么场合？</Button>
+                  <Button className='voice-guide-button' onTap={() => showDemoToast('已记录：颜色呼应')}>搭配亮点？</Button>
+                  <Button className='voice-guide-button' onTap={() => showDemoToast('已记录：加腰带')}>还有什么可配？</Button>
+                </View>
+              )}
+              {isAnalyzing && (
+                <View className='voice-analysis'>
+                  <View className='voice-analysis-spinner' />
+                  <Text className='voice-analysis-text'>正在整理搭配思路</Text>
+                </View>
+              )}
+              {recordState === 'done' && !isAnalyzing && (
+                <View className='voice-result-card'>
+                  <Text className='voice-result-title'>AI识别结果（演示）</Text>
+                  <View className='voice-result-list'>
+                    <Text className='voice-result-item'>场合：通勤</Text>
+                    <Text className='voice-result-item'>亮点：颜色呼应</Text>
+                    <Text className='voice-result-item'>补充：可加腰带</Text>
+                  </View>
+                  <Text className='voice-result-summary'>这组搭配适合日常出门，整体清爽，层次足够明确。</Text>
+                  <View className='voice-result-actions'>
+                    <Button className='voice-result-button' onTap={resetVoiceDemo}>重新模拟</Button>
+                    <Button className='voice-result-button is-primary' onTap={() => showDemoToast('演示数据已保存')}>保存演示</Button>
+                  </View>
+                </View>
+              )}
+            </View>
+            <View className='confirm-action-bar'>
+              <Button className='confirm-action-button' onTap={() => showDemoToast('演示已取消')}>取消</Button>
+              <Button
+                className={`confirm-action-button is-next ${recordState === 'done' && !isAnalyzing ? 'is-active' : ''}`}
+                disabled={recordState !== 'done' || isAnalyzing}
+                onTap={() => showDemoToast('已进入下一步')}
+              >
+                下一步
+              </Button>
+            </View>
           </View>
         </View>
       )}

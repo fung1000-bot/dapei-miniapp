@@ -2,7 +2,7 @@
   "miniprogramRoot": "./dist",
   "projectname": "sbti-miniapp",
   "description": "cd sbti-miniapp",
-  "appid": "touristappid",
+  "appid": "wx68b926a2b145ced0",
   "setting": {
     "urlCheck": true,
     "es6": true,

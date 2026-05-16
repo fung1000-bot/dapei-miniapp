@@ -74,7 +74,10 @@ page {
 
 .action-card::after,
 .primary-button::after,
-.secondary-button::after,
+.voice-demo-record-button::after,
+.voice-guide-button::after,
+.voice-result-button::after,
+.confirm-action-button::after,
 .manual-pick-button::after,
 .plain-button::after {
   border: 0;
@@ -188,8 +191,7 @@ page {
   box-sizing: border-box;
 }
 
-.primary-button,
-.secondary-button {
+.primary-button {
   height: 88px;
   border-radius: 18px;
   font-size: 30px;
@@ -200,11 +202,6 @@ page {
 .primary-button {
   color: #fff;
   background: #2f5d50;
-}
-
-.secondary-button {
-  color: #2f5d50;
-  background: #e7f1e8;
 }
 
 .capture {
@@ -221,23 +218,6 @@ page {
   align-items: center;
   justify-content: center;
   gap: 22px;
-}
-
-.recording-tip {
-  display: block;
-  min-width: 220px;
-  padding: 16px 24px;
-  border-radius: 999px;
-  color: #7b3f32;
-  background: #ffe7dc;
-  font-size: 26px;
-  text-align: center;
-}
-
-.bottom-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
 }
 
 .screen-title {
@@ -420,6 +400,268 @@ page {
   flex-direction: column;
   gap: 18px;
   margin-top: auto;
+}
+
+.voice-demo-card {
+  position: relative;
+  display: flex;
+  min-height: 330px;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 22px 24px;
+  border: 2px solid rgba(255, 140, 90, 0.2);
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(255, 140, 90, 0.12), rgba(255, 255, 255, 0.78)),
+    #fffaf6;
+  box-shadow: 0 14px 30px rgba(115, 76, 48, 0.08);
+  box-sizing: border-box;
+  transition: background 300ms ease, border-color 300ms ease, box-shadow 300ms ease;
+}
+
+.voice-demo-card--recording {
+  border-color: rgba(223, 68, 62, 0.24);
+  background:
+    linear-gradient(145deg, rgba(223, 68, 62, 0.1), rgba(255, 255, 255, 0.82)),
+    #fff8f6;
+  box-shadow: 0 16px 34px rgba(160, 54, 44, 0.12);
+}
+
+.voice-demo-card--done {
+  border-color: rgba(47, 93, 80, 0.18);
+  background:
+    linear-gradient(145deg, rgba(47, 93, 80, 0.08), rgba(255, 255, 255, 0.86)),
+    #fbf8f2;
+}
+
+.voice-demo-badge {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  color: #9a4f2f;
+  background: rgba(255, 140, 90, 0.14);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.voice-demo-title {
+  max-width: 460px;
+  color: #3d2a1d;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.32;
+  text-align: center;
+}
+
+.voice-demo-timer {
+  margin-top: 10px;
+  color: #df443e;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.voice-demo-record-button {
+  display: flex;
+  width: 140px;
+  height: 140px;
+  align-items: center;
+  justify-content: center;
+  margin: 28px auto 18px;
+  border-radius: 50%;
+  color: #fff;
+  background: #ff8c5a;
+  box-shadow: 0 16px 30px rgba(255, 140, 90, 0.28);
+  font-size: 58px;
+  font-weight: 700;
+  line-height: 140px;
+  box-sizing: border-box;
+  transition: background 300ms ease, box-shadow 300ms ease, transform 300ms ease;
+}
+
+.voice-demo-record-button.is-recording {
+  background: #df443e;
+  box-shadow: 0 16px 32px rgba(223, 68, 62, 0.3);
+  transform: scale(1.02);
+}
+
+.voice-demo-hint {
+  color: #8a7464;
+  font-size: 22px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.voice-guide-row {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+  animation: voiceFloatIn 300ms ease both;
+}
+
+.voice-guide-button {
+  display: flex;
+  min-height: 68px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 16px;
+  color: #7b4a32;
+  background: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  box-shadow: 0 8px 18px rgba(115, 76, 48, 0.08);
+  box-sizing: border-box;
+}
+
+.voice-analysis {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  color: #755f4e;
+  font-size: 24px;
+  line-height: 1.3;
+}
+
+.voice-analysis-spinner {
+  width: 32px;
+  height: 32px;
+  border: 4px solid rgba(255, 140, 90, 0.24);
+  border-top-color: #ff8c5a;
+  border-radius: 50%;
+  animation: voiceSpin 1s linear infinite;
+  box-sizing: border-box;
+}
+
+.voice-analysis-text {
+  color: #755f4e;
+  font-size: 24px;
+}
+
+.voice-result-card {
+  width: 100%;
+  margin-top: 4px;
+  padding: 22px;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 12px 26px rgba(51, 39, 28, 0.08);
+  box-sizing: border-box;
+  animation: voiceFloatIn 300ms ease both;
+}
+
+.voice-result-title {
+  display: block;
+  color: #241f1a;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.voice-result-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.voice-result-item {
+  min-width: 0;
+  padding: 10px 8px;
+  border-radius: 12px;
+  color: #5d493a;
+  background: #fff4ec;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.voice-result-summary {
+  display: block;
+  margin-top: 16px;
+  color: #766b61;
+  font-size: 22px;
+  line-height: 1.45;
+}
+
+.voice-result-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.voice-result-button {
+  height: 70px;
+  border-radius: 16px;
+  color: #6f5541;
+  background: #f6eee7;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 70px;
+}
+
+.voice-result-button.is-primary {
+  color: #fff;
+  background: #ff8c5a;
+}
+
+.confirm-action-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.confirm-action-button {
+  height: 82px;
+  border-radius: 18px;
+  color: #6f5541;
+  background: #f7eee7;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 82px;
+}
+
+.confirm-action-button.is-next {
+  color: rgba(255, 255, 255, 0.76);
+  background: #bfd2cb;
+}
+
+.confirm-action-button.is-next.is-active {
+  color: #fff;
+  background: #2f5d50;
+}
+
+.confirm-action-button[disabled] {
+  color: rgba(255, 255, 255, 0.76);
+  background: #bfd2cb;
+}
+
+@keyframes voiceSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes voiceFloatIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .note-input {
