@@ -1,17 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Input, Text, View } from '@tarojs/components'
+import { Button, Camera, Input, Text, View } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 import './index.scss'
 
 type Screen = 'home' | 'camera' | 'captureResult' | 'match' | 'manualPick' | 'confirm'
 type ClothingCategory = 'top' | 'bottom' | 'dress' | 'set'
 type RecordState = 'idle' | 'recording' | 'done'
+type FlashMode = 'auto' | 'on' | 'off'
 
 type ClothingItem = {
   id: number
   label: string
   tone: string
   category: ClothingCategory
+}
+
+type WardrobeItem = {
+  id: string
+  localPath: string
+  albumSaved: boolean
+  createdAt: string
+  name: string
+  color: string
+  price: null
+  tags: string[]
+  outfits: string[]
 }
 
 const clothingCategories: { key: ClothingCategory, label: string }[] = [
@@ -50,6 +63,9 @@ export default function Index () {
   const [recordSeconds, setRecordSeconds] = useState(0)
   const [showGuideButtons, setShowGuideButtons] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [flashMode, setFlashMode] = useState<FlashMode>('auto')
+  const [capturedCount, setCapturedCount] = useState(0)
+  const [isTakingPhoto, setIsTakingPhoto] = useState(false)
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const analysisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -69,6 +85,8 @@ export default function Index () {
     setMatchCategory('top')
     setManualPickCategory('bottom')
     setNote('')
+    setCapturedCount(0)
+    setIsTakingPhoto(false)
     resetVoiceDemo()
   }
 
@@ -179,6 +197,85 @@ export default function Index () {
     })
   }
 
+  function handleFlashModeTap () {
+    const nextFlashMode: Record<FlashMode, FlashMode> = {
+      auto: 'on',
+      on: 'off',
+      off: 'auto'
+    }
+
+    setFlashMode(nextFlashMode[flashMode])
+  }
+
+  async function handleTakePhoto () {
+    if (isTakingPhoto) return
+
+    setIsTakingPhoto(true)
+
+    try {
+      const tempImagePath = await takeCameraPhoto()
+      const albumSaved = await savePhotoToAlbum(tempImagePath)
+      await savePhotoToWardrobe(tempImagePath, albumSaved)
+
+      setCapturedCount(count => count + 1)
+      Taro.vibrateShort({ type: 'light' }).catch(() => undefined)
+    } catch (error) {
+      Taro.showToast({
+        title: '拍照失败，请重试',
+        icon: 'none',
+        duration: 1400
+      })
+    } finally {
+      setIsTakingPhoto(false)
+    }
+  }
+
+  function takeCameraPhoto () {
+    return new Promise<string>((resolve, reject) => {
+      const cameraContext = Taro.createCameraContext()
+
+      cameraContext.takePhoto({
+        quality: 'high',
+        success: result => resolve(result.tempImagePath),
+        fail: reject
+      })
+    })
+  }
+
+  async function savePhotoToAlbum (tempImagePath: string) {
+    try {
+      await Taro.saveImageToPhotosAlbum({ filePath: tempImagePath })
+      return true
+    } catch (error) {
+      return false
+    }
+  }
+
+  async function savePhotoToWardrobe (tempImagePath: string, albumSaved: boolean) {
+    const savedFile = await new Promise<Taro.saveFile.SuccessCallbackResult>((resolve, reject) => {
+      Taro.saveFile({
+        tempFilePath: tempImagePath,
+        success: resolve,
+        fail: reject
+      })
+    })
+    const storageItems = Taro.getStorageSync<WardrobeItem[]>('wardrobeItems')
+    const wardrobeItems = Array.isArray(storageItems) ? storageItems : []
+    const wardrobeItem: WardrobeItem = {
+      id: `item_${Date.now()}`,
+      localPath: savedFile.savedFilePath,
+      albumSaved,
+      createdAt: new Date().toISOString(),
+      name: '',
+      color: '',
+      price: null,
+      tags: [],
+      outfits: []
+    }
+
+    Taro.setStorageSync('wardrobeItems', [wardrobeItem, ...wardrobeItems])
+  }
+
   function handleBackToMatch () {
     resetVoiceDemo()
     setScreen('match')
@@ -243,18 +340,29 @@ export default function Index () {
       )}
 
       {screen === 'camera' && (
-        <View className='camera screen'>
-          <View className='topbar'>
-            <Button className='plain-button' onTap={resetToHome}>返回</Button>
+        <View className='camera'>
+          <Camera
+            className='camera-view'
+            devicePosition='back'
+            flash={flashMode}
+          />
+          <View className='camera-overlay camera-overlay--top'>
+            <Button className='camera-control camera-control--back' onTap={resetToHome}>返回</Button>
+            <Text className='camera-count'>已拍 {capturedCount}</Text>
           </View>
-          <View className='camera-box'>
-            <View className='camera-icon'>
-              <View className='camera-icon__lens' />
+          <View className='camera-overlay camera-overlay--bottom'>
+            <Button className='flash-button' onTap={handleFlashModeTap}>闪光灯 {flashMode}</Button>
+            <Button
+              className={`shutter-button ${isTakingPhoto ? 'is-taking' : ''}`}
+              disabled={isTakingPhoto}
+              onTap={handleTakePhoto}
+            >
+              拍照
+            </Button>
+            <View className='capture-badge'>
+              <Text>{capturedCount}</Text>
             </View>
-            <Text className='title'>模拟拍照</Text>
-            <Text className='subtext'>这里不会调用真实相机，只用于测试流程。</Text>
           </View>
-          <Button className='primary-button' onTap={() => setScreen('captureResult')}>拍照</Button>
         </View>
       )}
 
