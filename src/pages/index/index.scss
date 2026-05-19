@@ -77,6 +77,9 @@ page {
 .camera-control::after,
 .flash-button::after,
 .shutter-button::after,
+.capture-preview__close::after,
+.capture-preview__delete::after,
+.capture-preview__keep::after,
 .voice-demo-record-button::after,
 .voice-guide-button::after,
 .voice-result-button::after,
@@ -177,8 +180,11 @@ page {
 
 .camera-overlay--bottom {
   bottom: 0;
-  justify-content: space-between;
-  padding: 26px 28px 42px;
+  display: grid;
+  grid-template-columns: 1fr 144px 1fr;
+  gap: 18px;
+  justify-content: initial;
+  padding: 24px 28px 42px;
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.58), rgba(0, 0, 0, 0));
 }
 
@@ -206,7 +212,8 @@ page {
 }
 
 .flash-button {
-  min-width: 160px;
+  min-width: 0;
+  justify-self: start;
 }
 
 .shutter-button {
@@ -222,6 +229,7 @@ page {
   line-height: 128px;
   box-sizing: border-box;
   transition: opacity 160ms ease, transform 160ms ease;
+  justify-self: center;
 }
 
 .shutter-button.is-taking,
@@ -230,20 +238,167 @@ page {
   transform: scale(0.96);
 }
 
-.capture-badge {
+.capture-album {
+  position: relative;
   display: flex;
-  width: 72px;
-  height: 72px;
+  width: 92px;
+  height: 92px;
   align-items: center;
   justify-content: center;
-  border: 3px solid rgba(255, 255, 255, 0.62);
-  border-radius: 22px;
+  justify-self: end;
+  overflow: hidden;
+  border: 4px solid rgba(255, 255, 255, 0.68);
+  border-radius: 20px;
   color: #fff;
-  background: rgba(47, 93, 80, 0.92);
-  font-size: 28px;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 22px;
   font-weight: 800;
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22);
   box-sizing: border-box;
+}
+
+.capture-album__image {
+  width: 100%;
+  height: 100%;
+}
+
+.capture-album__empty {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.capture-album__count {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: #fff;
+  background: #2f5d50;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 32px;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.capture-preview {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.capture-preview__panel {
+  width: 100%;
+  max-height: 88vh;
+  padding: 24px 24px 34px;
+  border-radius: 30px 30px 0 0;
+  background: #f7f4ee;
+  box-sizing: border-box;
+}
+
+.capture-preview__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.capture-preview__title {
+  color: #241f1a;
+  font-size: 30px;
+  font-weight: 800;
+}
+
+.capture-preview__close {
+  height: 58px;
+  padding: 0 20px;
+  border-radius: 999px;
+  color: #59483b;
+  background: #fff;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 58px;
+}
+
+.capture-preview__main {
+  display: flex;
+  height: 52vh;
+  min-height: 520px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 22px;
+  overflow: hidden;
+  border-radius: 24px;
+  background: #171411;
+}
+
+.capture-preview__image {
+  width: 100%;
+  height: 100%;
+}
+
+.capture-preview__thumbs {
+  display: flex;
+  gap: 12px;
+  margin-top: 18px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.capture-preview__thumb {
+  flex: 0 0 auto;
+  width: 92px;
+  height: 92px;
+  overflow: hidden;
+  border: 4px solid transparent;
+  border-radius: 18px;
+  background: #ddd3c7;
+  box-sizing: border-box;
+}
+
+.capture-preview__thumb.is-active {
+  border-color: #2f5d50;
+}
+
+.capture-preview__thumb-image {
+  width: 100%;
+  height: 100%;
+}
+
+.capture-preview__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 22px;
+}
+
+.capture-preview__delete,
+.capture-preview__keep {
+  height: 78px;
+  border-radius: 18px;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 78px;
+}
+
+.capture-preview__delete {
+  color: #8b332f;
+  background: #f3ddd8;
+}
+
+.capture-preview__keep {
+  color: #fff;
+  background: #2f5d50;
 }
 
 .primary-button {

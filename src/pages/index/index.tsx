@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Camera, Input, Text, View } from '@tarojs/components'
+import { Button, Camera, Image, Input, Text, View } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 import './index.scss'
 
 type Screen = 'home' | 'camera' | 'captureResult' | 'match' | 'manualPick' | 'confirm'
-type ClothingCategory = 'top' | 'bottom' | 'dress' | 'set'
+type ClothingCategory = 'top' | 'bottom' | 'dress' | 'set' | 'unknown'
+type CategorySource = 'ai' | 'manual' | 'unknown'
 type RecordState = 'idle' | 'recording' | 'done'
 type FlashMode = 'auto' | 'on' | 'off'
 
 type ClothingItem = {
-  id: number
+  id: string
   label: string
   tone: string
   category: ClothingCategory
+  localPath?: string
+  categorySource?: CategorySource
 }
 
 type WardrobeItem = {
@@ -20,6 +23,8 @@ type WardrobeItem = {
   localPath: string
   albumSaved: boolean
   createdAt: string
+  category: ClothingCategory
+  categorySource: CategorySource
   name: string
   color: string
   price: null
@@ -31,26 +36,74 @@ const clothingCategories: { key: ClothingCategory, label: string }[] = [
   { key: 'top', label: '上衣' },
   { key: 'bottom', label: '下衣' },
   { key: 'dress', label: '连衣裙' },
-  { key: 'set', label: '套装' }
+  { key: 'set', label: '套装' },
+  { key: 'unknown', label: '未识别' }
 ]
 
 const clothingItems: ClothingItem[] = [
-  { id: 1, label: '上衣1', tone: 'tone-1', category: 'top' },
-  { id: 2, label: '上衣2', tone: 'tone-2', category: 'top' },
-  { id: 3, label: '上衣3', tone: 'tone-3', category: 'top' },
-  { id: 4, label: '下衣1', tone: 'tone-4', category: 'bottom' },
-  { id: 5, label: '下衣2', tone: 'tone-5', category: 'bottom' },
-  { id: 6, label: '连衣裙1', tone: 'tone-6', category: 'dress' },
-  { id: 7, label: '连衣裙2', tone: 'tone-1', category: 'dress' },
-  { id: 8, label: '套装1', tone: 'tone-2', category: 'set' },
-  { id: 9, label: '套装2', tone: 'tone-3', category: 'set' }
+  { id: 'demo_1', label: '上衣1', tone: 'tone-1', category: 'top' },
+  { id: 'demo_2', label: '上衣2', tone: 'tone-2', category: 'top' },
+  { id: 'demo_3', label: '上衣3', tone: 'tone-3', category: 'top' },
+  { id: 'demo_4', label: '下衣1', tone: 'tone-4', category: 'bottom' },
+  { id: 'demo_5', label: '下衣2', tone: 'tone-5', category: 'bottom' },
+  { id: 'demo_6', label: '连衣裙1', tone: 'tone-6', category: 'dress' },
+  { id: 'demo_7', label: '连衣裙2', tone: 'tone-1', category: 'dress' },
+  { id: 'demo_8', label: '套装1', tone: 'tone-2', category: 'set' },
+  { id: 'demo_9', label: '套装2', tone: 'tone-3', category: 'set' }
 ]
 
-const recommendationItems: ClothingItem[] = [
-  { id: 101, label: '推荐1', tone: 'tone-4', category: 'bottom' },
-  { id: 102, label: '推荐2', tone: 'tone-5', category: 'top' },
-  { id: 103, label: '推荐3', tone: 'tone-6', category: 'set' }
-]
+const manualCategoryOptions = clothingCategories.filter(category => category.key !== 'unknown')
+
+function getCategoryLabel (category: ClothingCategory) {
+  const categoryItem = clothingCategories.find(item => item.key === category)
+
+  return categoryItem?.label ?? '未识别'
+}
+
+function readWardrobeItems () {
+  const storageItems = Taro.getStorageSync<Partial<WardrobeItem>[]>('wardrobeItems')
+  const wardrobeItems = Array.isArray(storageItems) ? storageItems : []
+
+  return wardrobeItems
+    .filter(item => Boolean(item.id && item.localPath))
+    .map((item): WardrobeItem => ({
+      id: String(item.id),
+      localPath: String(item.localPath),
+      albumSaved: Boolean(item.albumSaved),
+      createdAt: item.createdAt || new Date().toISOString(),
+      category: item.category || 'unknown',
+      categorySource: item.categorySource || 'unknown',
+      name: item.name || '',
+      color: item.color || '',
+      price: null,
+      tags: Array.isArray(item.tags) ? item.tags : [],
+      outfits: Array.isArray(item.outfits) ? item.outfits : []
+    }))
+}
+
+function writeWardrobeItems (items: WardrobeItem[]) {
+  Taro.setStorageSync('wardrobeItems', items)
+}
+
+function mapWardrobeItemToClothingItem (item: WardrobeItem, index: number): ClothingItem {
+  return {
+    id: item.id,
+    label: item.name || `${getCategoryLabel(item.category)}${index + 1}`,
+    tone: `tone-${(index % 6) + 1}`,
+    category: item.category,
+    localPath: item.localPath,
+    categorySource: item.categorySource
+  }
+}
+
+function getRecommendationCategories (category: ClothingCategory) {
+  if (category === 'top') return ['bottom', 'set'] as ClothingCategory[]
+  if (category === 'bottom') return ['top', 'set'] as ClothingCategory[]
+  if (category === 'dress') return ['top', 'set'] as ClothingCategory[]
+  if (category === 'set') return ['top', 'bottom'] as ClothingCategory[]
+
+  return []
+}
 
 export default function Index () {
   const [screen, setScreen] = useState<Screen>('home')
@@ -64,15 +117,26 @@ export default function Index () {
   const [showGuideButtons, setShowGuideButtons] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [flashMode, setFlashMode] = useState<FlashMode>('auto')
-  const [capturedCount, setCapturedCount] = useState(0)
+  const [wardrobeItems, setWardrobeItems] = useState<WardrobeItem[]>([])
+  const [capturedItems, setCapturedItems] = useState<WardrobeItem[]>([])
+  const [isCapturePreviewOpen, setIsCapturePreviewOpen] = useState(false)
+  const [capturePreviewIndex, setCapturePreviewIndex] = useState(0)
   const [isTakingPhoto, setIsTakingPhoto] = useState(false)
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const analysisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const matchItems = clothingItems.filter(item => item.category === matchCategory)
-  const manualPickItems = clothingItems.filter(item => item.category === manualPickCategory)
+  const catalogItems = wardrobeItems.length > 0 ? wardrobeItems.map(mapWardrobeItemToClothingItem) : clothingItems
+  const matchItems = catalogItems.filter(item => item.category === matchCategory)
+  const manualPickItems = catalogItems.filter(item => item.category === manualPickCategory)
+  const recommendationItems = selectedItem
+    ? catalogItems.filter(item => item.id !== selectedItem.id && getRecommendationCategories(selectedItem.category).includes(item.category))
+    : []
+  const capturedCount = capturedItems.length
+  const previewItem = capturedItems[capturePreviewIndex]
 
   useEffect(() => {
+    setWardrobeItems(readWardrobeItems())
+
     return () => {
       clearRecordTimers()
     }
@@ -85,7 +149,9 @@ export default function Index () {
     setMatchCategory('top')
     setManualPickCategory('bottom')
     setNote('')
-    setCapturedCount(0)
+    setCapturedItems([])
+    setIsCapturePreviewOpen(false)
+    setCapturePreviewIndex(0)
     setIsTakingPhoto(false)
     resetVoiceDemo()
   }
@@ -215,9 +281,11 @@ export default function Index () {
     try {
       const tempImagePath = await takeCameraPhoto()
       const albumSaved = await savePhotoToAlbum(tempImagePath)
-      await savePhotoToWardrobe(tempImagePath, albumSaved)
+      const wardrobeItem = await savePhotoToWardrobe(tempImagePath, albumSaved)
 
-      setCapturedCount(count => count + 1)
+      setCapturedItems(items => [wardrobeItem, ...items])
+      setCapturePreviewIndex(0)
+      recognizeAndUpdateCategory(wardrobeItem.id)
       Taro.vibrateShort({ type: 'light' }).catch(() => undefined)
     } catch (error) {
       Taro.showToast({
@@ -266,6 +334,8 @@ export default function Index () {
       localPath: savedFile.savedFilePath,
       albumSaved,
       createdAt: new Date().toISOString(),
+      category: 'unknown',
+      categorySource: 'unknown',
       name: '',
       color: '',
       price: null,
@@ -273,7 +343,95 @@ export default function Index () {
       outfits: []
     }
 
-    Taro.setStorageSync('wardrobeItems', [wardrobeItem, ...wardrobeItems])
+    const nextItems = [wardrobeItem, ...wardrobeItems]
+
+    writeWardrobeItems(nextItems)
+    setWardrobeItems(nextItems)
+
+    return wardrobeItem
+  }
+
+  async function recognizeAndUpdateCategory (itemId: string) {
+    const category = await mockRecognizeCategory(itemId)
+    const categorySource: CategorySource = category === 'unknown' ? 'unknown' : 'ai'
+
+    updateWardrobeItemCategory(itemId, category, categorySource)
+  }
+
+  function mockRecognizeCategory (itemId: string) {
+    const categories: ClothingCategory[] = ['top', 'bottom', 'dress', 'set', 'unknown']
+    const lastNumber = Number(itemId.replace(/\D/g, '').slice(-1))
+    const category = categories[Number.isNaN(lastNumber) ? 4 : lastNumber % categories.length]
+
+    return new Promise<ClothingCategory>(resolve => {
+      setTimeout(() => resolve(category), 650)
+    })
+  }
+
+  function updateWardrobeItemCategory (
+    itemId: string,
+    category: ClothingCategory,
+    categorySource: CategorySource
+  ) {
+    const nextItems = readWardrobeItems().map(item => {
+      if (item.id !== itemId) return item
+
+      return {
+        ...item,
+        category,
+        categorySource,
+        tags: category === 'unknown' || item.tags.includes(getCategoryLabel(category))
+          ? item.tags
+          : [...item.tags, getCategoryLabel(category)]
+      }
+    })
+
+    writeWardrobeItems(nextItems)
+    setWardrobeItems(nextItems)
+    setCapturedItems(items => items.map(item => {
+      if (item.id !== itemId) return item
+
+      return {
+        ...item,
+        category,
+        categorySource
+      }
+    }))
+  }
+
+  function handleOpenCapturePreview () {
+    if (capturedItems.length === 0) {
+      showDemoToast('还没有拍摄照片')
+      return
+    }
+
+    setCapturePreviewIndex(0)
+    setIsCapturePreviewOpen(true)
+  }
+
+  async function handleDeletePreviewItem () {
+    if (!previewItem) return
+
+    const nextItems = capturedItems.filter(item => item.id !== previewItem.id)
+    const storageItems = Taro.getStorageSync<WardrobeItem[]>('wardrobeItems')
+    const wardrobeItems = Array.isArray(storageItems) ? storageItems : []
+
+    Taro.setStorageSync(
+      'wardrobeItems',
+      wardrobeItems.filter(item => item.id !== previewItem.id)
+    )
+
+    await Taro.removeSavedFile({ filePath: previewItem.localPath }).catch(() => undefined)
+
+    setCapturedItems(nextItems)
+
+    if (nextItems.length === 0) {
+      setCapturePreviewIndex(0)
+      setIsCapturePreviewOpen(false)
+      return
+    }
+
+    setCapturePreviewIndex(index => Math.min(index, nextItems.length - 1))
   }
 
   function handleBackToMatch () {
@@ -359,10 +517,49 @@ export default function Index () {
             >
               拍照
             </Button>
-            <View className='capture-badge'>
-              <Text>{capturedCount}</Text>
+            <View className={`capture-album ${capturedCount > 0 ? 'has-photo' : ''}`} onTap={handleOpenCapturePreview}>
+              {capturedItems[0] ? (
+                <Image className='capture-album__image' src={capturedItems[0].localPath} mode='aspectFill' />
+              ) : (
+                <Text className='capture-album__empty'>相册</Text>
+              )}
+              {capturedCount > 0 && (
+                <Text className='capture-album__count'>{capturedCount}</Text>
+              )}
             </View>
           </View>
+
+          {isCapturePreviewOpen && previewItem && (
+            <View className='capture-preview'>
+              <View className='capture-preview__panel'>
+                <View className='capture-preview__header'>
+                  <Text className='capture-preview__title'>本次拍摄 {capturedCount} 张</Text>
+                  <Button className='capture-preview__close' onTap={() => setIsCapturePreviewOpen(false)}>返回拍照</Button>
+                </View>
+
+                <View className='capture-preview__main'>
+                  <Image className='capture-preview__image' src={previewItem.localPath} mode='aspectFit' />
+                </View>
+
+                <View className='capture-preview__thumbs'>
+                  {capturedItems.map((item, index) => (
+                    <View
+                      key={item.id}
+                      className={`capture-preview__thumb ${index === capturePreviewIndex ? 'is-active' : ''}`}
+                      onTap={() => setCapturePreviewIndex(index)}
+                    >
+                      <Image className='capture-preview__thumb-image' src={item.localPath} mode='aspectFill' />
+                    </View>
+                  ))}
+                </View>
+
+                <View className='capture-preview__actions'>
+                  <Button className='capture-preview__delete' onTap={handleDeletePreviewItem}>删除这张</Button>
+                  <Button className='capture-preview__keep' onTap={() => setIsCapturePreviewOpen(false)}>继续拍</Button>
+                </View>
+              </View>
+            </View>
+          )}
         </View>
       )}
 
