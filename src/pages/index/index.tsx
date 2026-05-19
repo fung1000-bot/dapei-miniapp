@@ -253,7 +253,10 @@ export default function Index () {
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const analysisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const noteRef = useRef('')
   const recorderManagerRef = useRef<ReturnType<typeof Taro.getRecorderManager> | null>(null)
+  const isRecorderActiveRef = useRef(false)
+  const shouldDiscardRecorderStopRef = useRef(false)
   const catalogItems = wardrobeItems.length > 0 ? wardrobeItems.map(mapWardrobeItemToClothingItem) : clothingItems
   const matchItems = catalogItems.filter(item => item.category === matchCategory)
   const manualPickItems = catalogItems.filter(item => item.category === manualPickCategory)
@@ -272,6 +275,7 @@ export default function Index () {
       handleRecorderStop(result)
     })
     recorderManager.onError(() => {
+      isRecorderActiveRef.current = false
       clearRecordTimers()
       setRecordState('idle')
       setIsAnalyzing(false)
@@ -280,7 +284,10 @@ export default function Index () {
 
     return () => {
       clearRecordTimers()
-      recorderManager.stop()
+      if (isRecorderActiveRef.current) {
+        shouldDiscardRecorderStopRef.current = true
+        recorderManager.stop()
+      }
     }
   }, [])
 
@@ -291,6 +298,7 @@ export default function Index () {
     setMatchCategory('top')
     setManualPickCategory('bottom')
     setNote('')
+    noteRef.current = ''
     setCapturedItems([])
     setIsCapturePreviewOpen(false)
     setCapturePreviewIndex(0)
@@ -346,6 +354,11 @@ export default function Index () {
   }
 
   function resetVoiceDemo () {
+    if (isRecorderActiveRef.current) {
+      shouldDiscardRecorderStopRef.current = true
+      recorderManagerRef.current?.stop()
+    }
+
     clearRecordTimers()
     setRecordState('idle')
     setRecordSeconds(0)
@@ -395,13 +408,22 @@ export default function Index () {
       setShowGuideButtons(true)
     }, 5000)
 
-    recorderManager.start({
-      duration: 120000,
-      format: 'mp3',
-      sampleRate: 16000,
-      numberOfChannels: 1,
-      encodeBitRate: 48000
-    })
+    isRecorderActiveRef.current = true
+
+    try {
+      recorderManager.start({
+        duration: 120000,
+        format: 'mp3',
+        sampleRate: 16000,
+        numberOfChannels: 1,
+        encodeBitRate: 48000
+      })
+    } catch (error) {
+      isRecorderActiveRef.current = false
+      clearRecordTimers()
+      setRecordState('idle')
+      showDemoToast('无法开始录音')
+    }
   }
 
   function finishVoiceDemo () {
@@ -413,12 +435,20 @@ export default function Index () {
   }
 
   async function handleRecorderStop (result: Taro.RecorderManager.OnStopCallbackResult) {
+    if (!isRecorderActiveRef.current) return
+
+    isRecorderActiveRef.current = false
+    if (shouldDiscardRecorderStopRef.current) {
+      shouldDiscardRecorderStopRef.current = false
+      return
+    }
+
     clearRecordTimers()
     setShowGuideButtons(false)
 
     try {
       const savedVoiceNote = await saveVoiceNoteFile(result.tempFilePath, result.duration)
-      const preferences = mockExtractPreferences(note)
+      const preferences = mockExtractPreferences(noteRef.current)
 
       setVoiceNote(savedVoiceNote)
       setExtractedPreferences(preferences)
@@ -999,12 +1029,15 @@ export default function Index () {
               className='note-input'
               value={note}
               placeholder='补充说明（可选）'
-              onInput={event => setNote(event.detail.value)}
+              onInput={event => {
+                noteRef.current = event.detail.value
+                setNote(event.detail.value)
+              }}
             />
             <View className={`voice-demo-card voice-demo-card--${recordState}`}>
-              <Text className='voice-demo-badge'>演示版</Text>
+              <Text className='voice-demo-badge'>真实录音</Text>
               <Text className='voice-demo-title'>
-                {recordState === 'recording' ? '模拟录音中...' : isAnalyzing ? '模拟分析中...' : recordState === 'done' ? '已生成搭配思路' : '点击模拟录音（演示版）'}
+                {recordState === 'recording' ? '正在录音...' : isAnalyzing ? '正在保存录音...' : recordState === 'done' ? '录音已保存，已生成搭配偏好' : '点击录音，说说为什么这样搭'}
               </Text>
               {recordState === 'recording' && (
                 <Text className='voice-demo-timer'>{formatRecordTime(recordSeconds)}</Text>
@@ -1016,45 +1049,47 @@ export default function Index () {
                 {recordState === 'recording' ? '⏹️' : '🎤'}
               </Button>
               {recordState === 'idle' && (
-                <Text className='voice-demo-hint'>这是交互演示，不会真的录音</Text>
+                <Text className='voice-demo-hint'>建议说场景、风格、颜色、避雷点，后续会用于个性化推荐。</Text>
               )}
               {recordState === 'recording' && showGuideButtons && (
                 <View className='voice-guide-row'>
-                  <Button className='voice-guide-button' onTap={() => showDemoToast('已记录：通勤')}>适合什么场合？</Button>
-                  <Button className='voice-guide-button' onTap={() => showDemoToast('已记录：颜色呼应')}>搭配亮点？</Button>
-                  <Button className='voice-guide-button' onTap={() => showDemoToast('已记录：加腰带')}>还有什么可配？</Button>
+                  <Button className='voice-guide-button' onTap={() => showDemoToast('可以说：通勤、直播、约会')}>适合什么场合？</Button>
+                  <Button className='voice-guide-button' onTap={() => showDemoToast('可以说：显瘦、清爽、高级感')}>搭配亮点？</Button>
+                  <Button className='voice-guide-button' onTap={() => showDemoToast('可以说：太花、显胖、压身高')}>不喜欢什么？</Button>
                 </View>
               )}
               {isAnalyzing && (
                 <View className='voice-analysis'>
                   <View className='voice-analysis-spinner' />
-                  <Text className='voice-analysis-text'>正在整理搭配思路</Text>
+                  <Text className='voice-analysis-text'>正在保存录音文件</Text>
                 </View>
               )}
               {recordState === 'done' && !isAnalyzing && (
                 <View className='voice-result-card'>
-                  <Text className='voice-result-title'>AI识别结果（演示）</Text>
+                  <Text className='voice-result-title'>本次搭配偏好（待接 AI）</Text>
                   <View className='voice-result-list'>
-                    <Text className='voice-result-item'>场合：通勤</Text>
-                    <Text className='voice-result-item'>亮点：颜色呼应</Text>
-                    <Text className='voice-result-item'>补充：可加腰带</Text>
+                    <Text className='voice-result-item'>场合：{extractedPreferences.sceneTags[0] || '待提取'}</Text>
+                    <Text className='voice-result-item'>风格：{extractedPreferences.styleTags[0] || '待提取'}</Text>
+                    <Text className='voice-result-item'>颜色：{extractedPreferences.colorTags[0] || '待提取'}</Text>
                   </View>
-                  <Text className='voice-result-summary'>这组搭配适合日常出门，整体清爽，层次足够明确。</Text>
+                  <Text className='voice-result-summary'>
+                    {voiceNote ? `录音 ${Math.max(1, Math.round(voiceNote.duration / 1000))} 秒已保存。后续接入 STT 后会从语音中提取真实偏好。` : '录音已保存。'}
+                  </Text>
                   <View className='voice-result-actions'>
-                    <Button className='voice-result-button' onTap={resetVoiceDemo}>重新模拟</Button>
-                    <Button className='voice-result-button is-primary' onTap={() => showDemoToast('演示数据已保存')}>保存演示</Button>
+                    <Button className='voice-result-button' onTap={resetVoiceDemo}>重新录音</Button>
+                    <Button className='voice-result-button is-primary' onTap={() => showDemoToast('保存搭配时会写入审美画像')}>已关联</Button>
                   </View>
                 </View>
               )}
             </View>
             <View className='confirm-action-bar'>
-              <Button className='confirm-action-button' onTap={() => showDemoToast('演示已取消')}>取消</Button>
+              <Button className='confirm-action-button' onTap={handleBackToMatch}>取消</Button>
               <Button
                 className={`confirm-action-button is-next ${recordState === 'done' && !isAnalyzing ? 'is-active' : ''}`}
                 disabled={recordState !== 'done' || isAnalyzing}
-                onTap={() => showDemoToast('已进入下一步')}
+                onTap={handleSaveOutfit}
               >
-                下一步
+                保存搭配
               </Button>
             </View>
           </View>
