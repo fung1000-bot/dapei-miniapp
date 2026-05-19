@@ -24,6 +24,7 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
     },
     copy: {
       patterns: [
+        { from: 'cloudfunctions/', to: 'cloudfunctions/' }
       ],
       options: {
       }

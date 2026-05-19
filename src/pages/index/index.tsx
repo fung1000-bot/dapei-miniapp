@@ -609,8 +609,21 @@ export default function Index () {
     setFinalTranscript(transcriptText)
 
     try {
-      const savedVoiceNote = await saveVoiceNoteFile(result.tempFilePath, result.duration)
-      const preferences = mockExtractPreferences(noteRef.current)
+      const keywordText = transcriptText || noteRef.current
+      console.log('[VOICE] onStop result =', result)
+      console.log('[VOICE] transcript text =', transcriptText)
+      console.log('[VOICE] calling extractKeywordsDeepSeek')
+
+      const preferencesPromise = extractKeywordsWithDeepSeek(keywordText)
+      let savedVoiceNote: VoiceNote | null = null
+
+      try {
+        savedVoiceNote = await saveVoiceNoteFile(result.tempFilePath, result.duration)
+      } catch (error) {
+        console.error('[VOICE] save voice note error =', error)
+      }
+
+      const preferences = await preferencesPromise
 
       setVoiceNote(savedVoiceNote)
       setExtractedPreferences(preferences)
@@ -649,6 +662,42 @@ export default function Index () {
     ])
 
     return result.fileID
+  }
+
+  async function extractKeywordsWithDeepSeek (text: string): Promise<ExtractedPreferences> {
+    const inputText = text.trim()
+
+    if (!inputText || !wx.cloud?.callFunction) {
+      console.log('[DeepSeek] skip cloud function call', {
+        hasInputText: !!inputText,
+        hasCallFunction: !!wx.cloud?.callFunction
+      })
+      return mockExtractPreferences(text)
+    }
+
+    try {
+      console.log('[DeepSeek] extract keywords start', inputText)
+      const result = await wx.cloud.callFunction({
+        name: 'extractKeywordsDeepSeek',
+        data: {
+          text: inputText
+        }
+      })
+      const response = result?.result
+      console.log('[DeepSeek] extract keywords response', response)
+
+      if (response?.ok && response.extractedPreferences) {
+        return response.extractedPreferences
+      }
+
+      console.warn('[DeepSeek] keyword extraction failed, fallback to mock', response)
+      showDemoToast('关键词提取失败，已使用默认标签')
+      return mockExtractPreferences(text)
+    } catch (error) {
+      console.error('[DeepSeek] keyword extraction error, fallback to mock', error)
+      showDemoToast('关键词提取失败，已使用默认标签')
+      return mockExtractPreferences(text)
+    }
   }
 
   function mockExtractPreferences (freeText: string): ExtractedPreferences {
@@ -953,7 +1002,7 @@ export default function Index () {
 
     try {
       await addOutfitRecord(outfitRecord)
-      const enrichedOutfitRecord = await enrichOutfitRecordWithAi(outfitRecord, [selectedItem, selectedRecommendation])
+      const enrichedOutfitRecord = enrichOutfitRecordWithAi(outfitRecord)
 
       await updateWardrobeItemsForOutfit(enrichedOutfitRecord)
       await updateUserStyleProfile(enrichedOutfitRecord)
@@ -964,83 +1013,15 @@ export default function Index () {
     }
   }
 
-  async function enrichOutfitRecordWithAi (
-    outfitRecord: OutfitRecord,
-    selectedItems: ClothingItem[]
-  ): Promise<OutfitRecord> {
-    let nextOutfitRecord = outfitRecord
-
-    if (outfitRecord.voiceNote?.cloudFileId && outfitRecord.aiStatus.stt !== 'done') {
-      try {
-        const transcriptResult = await wx.cloud?.callFunction({
-          name: 'transcribeVoice',
-          data: {
-            outfitId: outfitRecord.id,
-            audioCloudFileId: outfitRecord.voiceNote.cloudFileId,
-            duration: outfitRecord.voiceNote.duration,
-            format: outfitRecord.voiceNote.format
-          }
-        })
-        const transcriptResponse = transcriptResult?.result
-
-        if (transcriptResponse?.ok && transcriptResponse.transcript) {
-          nextOutfitRecord = {
-            ...nextOutfitRecord,
-            transcript: transcriptResponse.transcript,
-            aiStatus: {
-              ...nextOutfitRecord.aiStatus,
-              stt: 'done'
-            }
-          }
-        }
-      } catch (error) {
-        console.error('[cloud] transcribe voice failed, keep pending transcript', error)
-        nextOutfitRecord = {
-          ...nextOutfitRecord,
-          aiStatus: {
-            ...nextOutfitRecord.aiStatus,
-            stt: 'failed'
-          }
-        }
+  function enrichOutfitRecordWithAi (outfitRecord: OutfitRecord): OutfitRecord {
+    return {
+      ...outfitRecord,
+      aiStatus: {
+        ...outfitRecord.aiStatus,
+        stt: outfitRecord.transcript.text ? 'done' : outfitRecord.aiStatus.stt,
+        preferenceExtract: 'done'
       }
     }
-
-    try {
-      const existingProfile = await readUserStyleProfile()
-      const preferenceResult = await wx.cloud?.callFunction({
-        name: 'extractStylePreference',
-        data: {
-          outfitId: outfitRecord.id,
-          noteText: outfitRecord.noteText,
-          transcriptText: nextOutfitRecord.transcript.text,
-          selectedItems,
-          existingProfile
-        }
-      })
-      const preferenceResponse = preferenceResult?.result
-
-      if (preferenceResponse?.ok && preferenceResponse.extractedPreferences) {
-        nextOutfitRecord = {
-          ...nextOutfitRecord,
-          extractedPreferences: preferenceResponse.extractedPreferences,
-          aiStatus: {
-            ...nextOutfitRecord.aiStatus,
-            preferenceExtract: 'done'
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[cloud] extract style preference failed, keep local mock preferences', error)
-      nextOutfitRecord = {
-        ...nextOutfitRecord,
-        aiStatus: {
-          ...nextOutfitRecord.aiStatus,
-          preferenceExtract: 'failed'
-        }
-      }
-    }
-
-    return nextOutfitRecord
   }
 
   async function updateWardrobeItemsForOutfit (outfitRecord: OutfitRecord) {
@@ -1399,12 +1380,12 @@ export default function Index () {
               {isAnalyzing && (
                 <View className='voice-analysis'>
                   <View className='voice-analysis-spinner' />
-                  <Text className='voice-analysis-text'>正在保存录音文件</Text>
+                  <Text className='voice-analysis-text'>正在处理录音...</Text>
                 </View>
               )}
               {recordState === 'done' && !isAnalyzing && (
                 <View className='voice-result-card'>
-                  <Text className='voice-result-title'>本次搭配偏好（待接 AI）</Text>
+                  <Text className='voice-result-title'>本次搭配偏好</Text>
                   {finalTranscript !== '' && (
                     <Text className='voice-final-transcript'>{finalTranscript}</Text>
                   )}

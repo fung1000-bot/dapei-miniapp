@@ -12,7 +12,7 @@
   "scripts": {
     "prepare": "husky",
     "new": "taro new",
-    "build:weapp": "taro build --type weapp",
+    "build:weapp": "taro build --type weapp && xcopy /E /I /Y cloudfunctions dist\\cloudfunctions",
     "build:swan": "taro build --type swan",
     "build:alipay": "taro build --type alipay",
     "build:tt": "taro build --type tt",
