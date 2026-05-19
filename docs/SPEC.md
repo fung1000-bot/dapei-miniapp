@@ -172,6 +172,9 @@ npm run dev:weapp
 ```ts
 type WardrobeItem = {
   id: string
+  ownerId: string
+  shopId: string | null
+  schemaVersion: number
   cloudFileId: string
   localPath: string
   albumSaved: boolean
@@ -191,6 +194,10 @@ type WardrobeItem = {
 字段说明：
 
 - `id`：本地唯一 ID，当前格式为 `item_时间戳`。
+- `ownerId`：预留用户归属字段，当前未接登录时为空字符串；接微信登录后应写入用户标识。
+- `shopId`：预留店铺字段，当前为 `null`；后续多店铺时写入店铺 ID。
+- `schemaVersion`：数据结构版本，当前为 `1`。
+- `_openid`：微信云开发在小程序端写入数据库时自动生成，不需要前端手动写入。
 - `cloudFileId`：微信云存储文件 ID，作为图片长期展示和后续 AI 识别的主文件引用。
 - `localPath`：当前拍摄会话里的本地临时路径，用于刚拍完的即时预览。
 - `albumSaved`：是否成功保存到手机相册；用户拒绝相册权限时为 `false`。
@@ -210,6 +217,9 @@ type WardrobeItem = {
 ```ts
 type OutfitRecord = {
   id: string
+  ownerId: string
+  shopId: string | null
+  schemaVersion: number
   itemIds: string[]
   createdAt: string
   noteText: string
@@ -241,6 +251,10 @@ type OutfitRecord = {
 字段说明：
 
 - `itemIds`：本次搭配涉及的衣服 ID，目前是两件。
+- `ownerId`：预留用户归属字段，当前未接登录时为空字符串。
+- `shopId`：预留店铺字段，当前为 `null`。
+- `schemaVersion`：数据结构版本，当前为 `1`。
+- `_openid`：微信云开发自动生成。
 - `noteText`：用户输入框里的补充说明。
 - `voiceNote`：真实录音文件信息，其中 `cloudFileId` 是长期存储的主引用。
 - `transcript`：语音转文字结果，当前待接 STT API。
@@ -255,8 +269,11 @@ type OutfitRecord = {
 
 ```ts
 type UserStyleProfile = {
-  updatedAt: string
   id: string
+  ownerId: string
+  shopId: string | null
+  schemaVersion: number
+  updatedAt: string
   sceneTags: { tag: string; count: number }[]
   styleTags: { tag: string; count: number }[]
   colorTags: { tag: string; count: number }[]
@@ -268,6 +285,10 @@ type UserStyleProfile = {
 字段说明：
 
 - `id`：当前为 `default`，后续多用户时替换为用户或店铺维度 ID。
+- `ownerId`：预留用户归属字段，当前未接登录时为空字符串。
+- `shopId`：预留店铺字段，当前为 `null`。
+- `schemaVersion`：数据结构版本，当前为 `1`。
+- `_openid`：微信云开发自动生成。
 - `sceneTags`：常用场景，例如通勤、直播、约会。
 - `styleTags`：偏好风格，例如清爽、显瘦、高级感。
 - `colorTags`：颜色偏好，例如同色系、低饱和、黑白灰。

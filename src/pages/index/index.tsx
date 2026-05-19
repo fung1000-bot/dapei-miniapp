@@ -23,6 +23,9 @@ type ClothingItem = {
 
 type WardrobeItem = {
   id: string
+  ownerId: string
+  shopId: string | null
+  schemaVersion: number
   cloudFileId: string
   localPath: string
   albumSaved: boolean
@@ -61,6 +64,9 @@ type ExtractedPreferences = {
 
 type OutfitRecord = {
   id: string
+  ownerId: string
+  shopId: string | null
+  schemaVersion: number
   itemIds: string[]
   createdAt: string
   noteText: string
@@ -79,6 +85,10 @@ type TagCounter = {
 }
 
 type UserStyleProfile = {
+  id: string
+  ownerId: string
+  shopId: string | null
+  schemaVersion: number
   updatedAt: string
   sceneTags: TagCounter[]
   styleTags: TagCounter[]
@@ -91,6 +101,7 @@ const WARDROBE_COLLECTION = 'wardrobeItems'
 const OUTFIT_COLLECTION = 'outfitRecords'
 const PROFILE_COLLECTION = 'userStyleProfiles'
 const PROFILE_ID = 'default'
+const CURRENT_SCHEMA_VERSION = 1
 
 const clothingCategories: { key: ClothingCategory, label: string }[] = [
   { key: 'top', label: '上衣' },
@@ -137,6 +148,9 @@ async function readWardrobeItems () {
     .filter(item => Boolean(item.id && item.localPath))
     .map((item): WardrobeItem => ({
       id: String(item.id),
+      ownerId: String(item.ownerId || ''),
+      shopId: item.shopId ? String(item.shopId) : null,
+      schemaVersion: typeof item.schemaVersion === 'number' ? item.schemaVersion : CURRENT_SCHEMA_VERSION,
       cloudFileId: String(item.cloudFileId || ''),
       localPath: String(item.localPath),
       albumSaved: Boolean(item.albumSaved),
@@ -205,6 +219,9 @@ async function readOutfitRecords () {
     .filter(item => Boolean(item.id && Array.isArray(item.itemIds)))
     .map((item): OutfitRecord => ({
       id: String(item.id),
+      ownerId: String(item.ownerId || ''),
+      shopId: item.shopId ? String(item.shopId) : null,
+      schemaVersion: typeof item.schemaVersion === 'number' ? item.schemaVersion : CURRENT_SCHEMA_VERSION,
       itemIds: Array.isArray(item.itemIds) ? item.itemIds.map(String) : [],
       createdAt: item.createdAt || new Date().toISOString(),
       noteText: item.noteText || '',
@@ -236,6 +253,10 @@ async function readUserStyleProfile () {
   const profile = Array.isArray(result.data) ? result.data[0] : null
 
   return {
+    id: profile?.id || PROFILE_ID,
+    ownerId: profile?.ownerId || '',
+    shopId: profile?.shopId || null,
+    schemaVersion: typeof profile?.schemaVersion === 'number' ? profile.schemaVersion : CURRENT_SCHEMA_VERSION,
     updatedAt: profile?.updatedAt || '',
     sceneTags: Array.isArray(profile?.sceneTags) ? profile.sceneTags : [],
     styleTags: Array.isArray(profile?.styleTags) ? profile.styleTags : [],
@@ -251,7 +272,10 @@ async function writeUserStyleProfile (profile: UserStyleProfile) {
 
   if (Array.isArray(result.data) && result.data.length > 0) {
     await database.collection(PROFILE_COLLECTION).where({ id: PROFILE_ID }).update({
-      data: profile
+      data: {
+        ...profile,
+        schemaVersion: CURRENT_SCHEMA_VERSION
+      }
     })
     return
   }
@@ -259,6 +283,9 @@ async function writeUserStyleProfile (profile: UserStyleProfile) {
   await database.collection(PROFILE_COLLECTION).add({
     data: {
       id: PROFILE_ID,
+      ownerId: '',
+      shopId: null,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       ...profile
     }
   })
@@ -354,6 +381,7 @@ export default function Index () {
     try {
       setWardrobeItems(await readWardrobeItems())
     } catch (error) {
+      console.error('[cloud] load wardrobe items failed', error)
       showDemoToast('云端衣橱加载失败')
     }
   }
@@ -587,20 +615,34 @@ export default function Index () {
     setIsTakingPhoto(true)
 
     try {
-      const tempImagePath = await takeCameraPhoto()
+      let tempImagePath = ''
+
+      try {
+        tempImagePath = await takeCameraPhoto()
+      } catch (error) {
+        console.error('[camera] takePhoto failed', error)
+        showDemoToast('相机拍照失败，请检查相机权限')
+        return
+      }
+
       const albumSaved = await savePhotoToAlbum(tempImagePath)
-      const wardrobeItem = await savePhotoToWardrobe(tempImagePath, albumSaved)
+      let wardrobeItem: WardrobeItem
+
+      try {
+        wardrobeItem = await savePhotoToWardrobe(tempImagePath, albumSaved)
+      } catch (error) {
+        console.error('[cloud] save wardrobe item failed', error)
+        showDemoToast('云端保存失败，请检查集合和权限')
+        return
+      }
 
       setCapturedItems(items => [wardrobeItem, ...items])
       setCapturePreviewIndex(0)
       recognizeAndUpdateCategory(wardrobeItem.id)
       Taro.vibrateShort({ type: 'light' }).catch(() => undefined)
     } catch (error) {
-      Taro.showToast({
-        title: '拍照失败，请重试',
-        icon: 'none',
-        duration: 1400
-      })
+      console.error('[camera] unexpected capture flow failed', error)
+      showDemoToast('拍照流程异常，请重试')
     } finally {
       setIsTakingPhoto(false)
     }
@@ -632,6 +674,9 @@ export default function Index () {
     const cloudFileId = await uploadCloudFile(`wardrobe/${itemId}.jpg`, tempImagePath)
     const wardrobeItem: WardrobeItem = {
       id: itemId,
+      ownerId: '',
+      shopId: null,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       cloudFileId,
       localPath: tempImagePath,
       albumSaved,
@@ -647,7 +692,13 @@ export default function Index () {
       outfits: []
     }
 
-    await addWardrobeItem(wardrobeItem)
+    try {
+      await addWardrobeItem(wardrobeItem)
+    } catch (error) {
+      await wx.cloud?.deleteFile({ fileList: [cloudFileId] }).catch(() => undefined)
+      throw error
+    }
+
     setWardrobeItems(items => [wardrobeItem, ...items])
 
     return wardrobeItem
@@ -766,6 +817,9 @@ export default function Index () {
     const now = new Date().toISOString()
     const outfitRecord: OutfitRecord = {
       id: `outfit_${Date.now()}`,
+      ownerId: '',
+      shopId: null,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       itemIds: [selectedItem.id, selectedRecommendation.id],
       createdAt: now,
       noteText: note,
@@ -828,6 +882,10 @@ export default function Index () {
     const profile = await readUserStyleProfile()
     const preferences = outfitRecord.extractedPreferences
     const nextProfile: UserStyleProfile = {
+      id: PROFILE_ID,
+      ownerId: profile.ownerId,
+      shopId: profile.shopId,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
       sceneTags: mergeTagCounters(profile.sceneTags, preferences.sceneTags),
       styleTags: mergeTagCounters(profile.styleTags, preferences.styleTags),
