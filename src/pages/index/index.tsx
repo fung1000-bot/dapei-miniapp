@@ -8,6 +8,8 @@ type ClothingCategory = 'top' | 'bottom' | 'dress' | 'set' | 'unknown'
 type CategorySource = 'ai' | 'manual' | 'unknown'
 type RecordState = 'idle' | 'recording' | 'done'
 type FlashMode = 'auto' | 'on' | 'off'
+type TranscriptSource = 'pending' | 'stt' | 'manual' | 'mock'
+type AiTaskStatus = 'pending' | 'done' | 'failed' | 'skipped'
 
 type ClothingItem = {
   id: string
@@ -29,7 +31,57 @@ type WardrobeItem = {
   color: string
   price: null
   tags: string[]
+  styleTags: string[]
+  matchCount: number
   outfits: string[]
+}
+
+type VoiceNote = {
+  localPath: string
+  duration: number
+  format: 'mp3'
+}
+
+type Transcript = {
+  text: string
+  source: TranscriptSource
+  updatedAt: string
+}
+
+type ExtractedPreferences = {
+  sceneTags: string[]
+  styleTags: string[]
+  colorTags: string[]
+  avoidTags: string[]
+  freeText: string
+}
+
+type OutfitRecord = {
+  id: string
+  itemIds: string[]
+  createdAt: string
+  noteText: string
+  voiceNote: VoiceNote | null
+  transcript: Transcript
+  extractedPreferences: ExtractedPreferences
+  aiStatus: {
+    stt: AiTaskStatus
+    preferenceExtract: AiTaskStatus
+  }
+}
+
+type TagCounter = {
+  tag: string
+  count: number
+}
+
+type UserStyleProfile = {
+  updatedAt: string
+  sceneTags: TagCounter[]
+  styleTags: TagCounter[]
+  colorTags: TagCounter[]
+  avoidTags: TagCounter[]
+  lastOutfitIds: string[]
 }
 
 const clothingCategories: { key: ClothingCategory, label: string }[] = [
@@ -77,6 +129,8 @@ function readWardrobeItems () {
       color: item.color || '',
       price: null,
       tags: Array.isArray(item.tags) ? item.tags : [],
+      styleTags: Array.isArray(item.styleTags) ? item.styleTags : [],
+      matchCount: typeof item.matchCount === 'number' ? item.matchCount : 0,
       outfits: Array.isArray(item.outfits) ? item.outfits : []
     }))
 }
@@ -105,6 +159,78 @@ function getRecommendationCategories (category: ClothingCategory) {
   return []
 }
 
+function readOutfitRecords () {
+  const storageItems = Taro.getStorageSync<Partial<OutfitRecord>[]>('outfitRecords')
+  const outfitRecords = Array.isArray(storageItems) ? storageItems : []
+
+  return outfitRecords
+    .filter(item => Boolean(item.id && Array.isArray(item.itemIds)))
+    .map((item): OutfitRecord => ({
+      id: String(item.id),
+      itemIds: Array.isArray(item.itemIds) ? item.itemIds.map(String) : [],
+      createdAt: item.createdAt || new Date().toISOString(),
+      noteText: item.noteText || '',
+      voiceNote: item.voiceNote || null,
+      transcript: item.transcript || {
+        text: '',
+        source: 'pending',
+        updatedAt: ''
+      },
+      extractedPreferences: item.extractedPreferences || createEmptyPreferences(),
+      aiStatus: item.aiStatus || {
+        stt: 'pending',
+        preferenceExtract: 'pending'
+      }
+    }))
+}
+
+function writeOutfitRecords (items: OutfitRecord[]) {
+  Taro.setStorageSync('outfitRecords', items)
+}
+
+function readUserStyleProfile () {
+  const profile = Taro.getStorageSync<Partial<UserStyleProfile>>('userStyleProfile')
+
+  return {
+    updatedAt: profile?.updatedAt || '',
+    sceneTags: Array.isArray(profile?.sceneTags) ? profile.sceneTags : [],
+    styleTags: Array.isArray(profile?.styleTags) ? profile.styleTags : [],
+    colorTags: Array.isArray(profile?.colorTags) ? profile.colorTags : [],
+    avoidTags: Array.isArray(profile?.avoidTags) ? profile.avoidTags : [],
+    lastOutfitIds: Array.isArray(profile?.lastOutfitIds) ? profile.lastOutfitIds : []
+  }
+}
+
+function writeUserStyleProfile (profile: UserStyleProfile) {
+  Taro.setStorageSync('userStyleProfile', profile)
+}
+
+function createEmptyPreferences (): ExtractedPreferences {
+  return {
+    sceneTags: [],
+    styleTags: [],
+    colorTags: [],
+    avoidTags: [],
+    freeText: ''
+  }
+}
+
+function mergeTagCounters (currentTags: TagCounter[], nextTags: string[]) {
+  const tagMap: Record<string, number> = {}
+
+  currentTags.forEach(item => {
+    tagMap[item.tag] = item.count
+  })
+
+  nextTags.forEach(tag => {
+    tagMap[tag] = (tagMap[tag] || 0) + 1
+  })
+
+  return Object.keys(tagMap)
+    .map(tag => ({ tag, count: tagMap[tag] }))
+    .sort((a, b) => b.count - a.count)
+}
+
 export default function Index () {
   const [screen, setScreen] = useState<Screen>('home')
   const [selectedItem, setSelectedItem] = useState<ClothingItem | null>(null)
@@ -116,6 +242,8 @@ export default function Index () {
   const [recordSeconds, setRecordSeconds] = useState(0)
   const [showGuideButtons, setShowGuideButtons] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [voiceNote, setVoiceNote] = useState<VoiceNote | null>(null)
+  const [extractedPreferences, setExtractedPreferences] = useState<ExtractedPreferences>(createEmptyPreferences)
   const [flashMode, setFlashMode] = useState<FlashMode>('auto')
   const [wardrobeItems, setWardrobeItems] = useState<WardrobeItem[]>([])
   const [capturedItems, setCapturedItems] = useState<WardrobeItem[]>([])
@@ -125,6 +253,7 @@ export default function Index () {
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const analysisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const recorderManagerRef = useRef<ReturnType<typeof Taro.getRecorderManager> | null>(null)
   const catalogItems = wardrobeItems.length > 0 ? wardrobeItems.map(mapWardrobeItemToClothingItem) : clothingItems
   const matchItems = catalogItems.filter(item => item.category === matchCategory)
   const manualPickItems = catalogItems.filter(item => item.category === manualPickCategory)
@@ -136,9 +265,22 @@ export default function Index () {
 
   useEffect(() => {
     setWardrobeItems(readWardrobeItems())
+    const recorderManager = Taro.getRecorderManager()
+
+    recorderManagerRef.current = recorderManager
+    recorderManager.onStop(result => {
+      handleRecorderStop(result)
+    })
+    recorderManager.onError(() => {
+      clearRecordTimers()
+      setRecordState('idle')
+      setIsAnalyzing(false)
+      showDemoToast('录音失败，请重试')
+    })
 
     return () => {
       clearRecordTimers()
+      recorderManager.stop()
     }
   }, [])
 
@@ -170,7 +312,7 @@ export default function Index () {
   function handlePickManualItem (item: ClothingItem) {
     if (selectedItem?.id === item.id) return
 
-    setSelectedRecommendation({ id: item.id, label: `自选${item.id}`, tone: item.tone, category: item.category })
+    setSelectedRecommendation({ ...item, label: item.label || '自选单品' })
     resetVoiceDemo()
     setScreen('confirm')
   }
@@ -209,6 +351,8 @@ export default function Index () {
     setRecordSeconds(0)
     setShowGuideButtons(false)
     setIsAnalyzing(false)
+    setVoiceNote(null)
+    setExtractedPreferences(createEmptyPreferences())
   }
 
   function formatRecordTime (seconds: number) {
@@ -228,11 +372,20 @@ export default function Index () {
   }
 
   function startVoiceDemo () {
+    const recorderManager = recorderManagerRef.current
+
+    if (!recorderManager) {
+      showDemoToast('录音初始化失败')
+      return
+    }
+
     clearRecordTimers()
     setRecordState('recording')
     setRecordSeconds(0)
     setShowGuideButtons(false)
     setIsAnalyzing(false)
+    setVoiceNote(null)
+    setExtractedPreferences(createEmptyPreferences())
 
     recordTimerRef.current = setInterval(() => {
       setRecordSeconds(seconds => seconds + 1)
@@ -241,18 +394,67 @@ export default function Index () {
     guideTimerRef.current = setTimeout(() => {
       setShowGuideButtons(true)
     }, 5000)
+
+    recorderManager.start({
+      duration: 120000,
+      format: 'mp3',
+      sampleRate: 16000,
+      numberOfChannels: 1,
+      encodeBitRate: 48000
+    })
   }
 
   function finishVoiceDemo () {
     clearRecordTimers()
-    setRecordState('done')
     setShowGuideButtons(false)
     setIsAnalyzing(true)
 
-    analysisTimerRef.current = setTimeout(() => {
+    recorderManagerRef.current?.stop()
+  }
+
+  async function handleRecorderStop (result: Taro.RecorderManager.OnStopCallbackResult) {
+    clearRecordTimers()
+    setShowGuideButtons(false)
+
+    try {
+      const savedVoiceNote = await saveVoiceNoteFile(result.tempFilePath, result.duration)
+      const preferences = mockExtractPreferences(note)
+
+      setVoiceNote(savedVoiceNote)
+      setExtractedPreferences(preferences)
+      setRecordState('done')
       setIsAnalyzing(false)
-      analysisTimerRef.current = null
-    }, 1000)
+    } catch (error) {
+      setRecordState('idle')
+      setIsAnalyzing(false)
+      showDemoToast('录音保存失败，请重试')
+    }
+  }
+
+  async function saveVoiceNoteFile (tempFilePath: string, duration: number) {
+    const savedFile = await new Promise<Taro.saveFile.SuccessCallbackResult>((resolve, reject) => {
+      Taro.saveFile({
+        tempFilePath,
+        success: resolve,
+        fail: reject
+      })
+    })
+
+    return {
+      localPath: savedFile.savedFilePath,
+      duration,
+      format: 'mp3' as const
+    }
+  }
+
+  function mockExtractPreferences (freeText: string): ExtractedPreferences {
+    return {
+      sceneTags: ['通勤'],
+      styleTags: ['清爽', '显瘦'],
+      colorTags: ['同色系'],
+      avoidTags: [],
+      freeText
+    }
   }
 
   function showDemoToast (title: string) {
@@ -340,6 +542,8 @@ export default function Index () {
       color: '',
       price: null,
       tags: [],
+      styleTags: [],
+      matchCount: 0,
       outfits: []
     }
 
@@ -388,6 +592,8 @@ export default function Index () {
 
     writeWardrobeItems(nextItems)
     setWardrobeItems(nextItems)
+    setSelectedItem(item => item?.id === itemId ? { ...item, category, categorySource } : item)
+    setSelectedRecommendation(item => item?.id === itemId ? { ...item, category, categorySource } : item)
     setCapturedItems(items => items.map(item => {
       if (item.id !== itemId) return item
 
@@ -416,10 +622,10 @@ export default function Index () {
     const storageItems = Taro.getStorageSync<WardrobeItem[]>('wardrobeItems')
     const wardrobeItems = Array.isArray(storageItems) ? storageItems : []
 
-    Taro.setStorageSync(
-      'wardrobeItems',
-      wardrobeItems.filter(item => item.id !== previewItem.id)
-    )
+    const nextWardrobeItems = wardrobeItems.filter(item => item.id !== previewItem.id)
+
+    writeWardrobeItems(nextWardrobeItems)
+    setWardrobeItems(nextWardrobeItems)
 
     await Taro.removeSavedFile({ filePath: previewItem.localPath }).catch(() => undefined)
 
@@ -432,6 +638,91 @@ export default function Index () {
     }
 
     setCapturePreviewIndex(index => Math.min(index, nextItems.length - 1))
+  }
+
+  function handleSetManualCategory (category: ClothingCategory) {
+    if (!selectedItem || selectedItem.id.startsWith('demo_')) return
+
+    updateWardrobeItemCategory(selectedItem.id, category, 'manual')
+    setSelectedItem({
+      ...selectedItem,
+      category,
+      categorySource: 'manual'
+    })
+    setMatchCategory(category)
+    showDemoToast(`已归类为${getCategoryLabel(category)}`)
+  }
+
+  function handleSaveOutfit () {
+    if (!selectedItem || !selectedRecommendation) return
+
+    const now = new Date().toISOString()
+    const outfitRecord: OutfitRecord = {
+      id: `outfit_${Date.now()}`,
+      itemIds: [selectedItem.id, selectedRecommendation.id],
+      createdAt: now,
+      noteText: note,
+      voiceNote,
+      transcript: {
+        text: '',
+        source: voiceNote ? 'pending' : 'mock',
+        updatedAt: ''
+      },
+      extractedPreferences,
+      aiStatus: {
+        stt: voiceNote ? 'pending' : 'skipped',
+        preferenceExtract: 'done'
+      }
+    }
+
+    const nextOutfits = [outfitRecord, ...readOutfitRecords()]
+
+    writeOutfitRecords(nextOutfits)
+    updateWardrobeItemsForOutfit(outfitRecord)
+    updateUserStyleProfile(outfitRecord)
+    showDemoToast('搭配已保存')
+    resetToHome()
+  }
+
+  function updateWardrobeItemsForOutfit (outfitRecord: OutfitRecord) {
+    const nextItems = readWardrobeItems().map(item => {
+      if (!outfitRecord.itemIds.includes(item.id)) return item
+
+      return {
+        ...item,
+        matchCount: item.matchCount + 1,
+        outfits: item.outfits.includes(outfitRecord.id) ? item.outfits : [outfitRecord.id, ...item.outfits],
+        styleTags: mergeStyleTags(item.styleTags, outfitRecord.extractedPreferences.styleTags)
+      }
+    })
+
+    writeWardrobeItems(nextItems)
+    setWardrobeItems(nextItems)
+  }
+
+  function mergeStyleTags (currentTags: string[], nextTags: string[]) {
+    const tags = [...currentTags]
+
+    nextTags.forEach(tag => {
+      if (!tags.includes(tag)) tags.push(tag)
+    })
+
+    return tags
+  }
+
+  function updateUserStyleProfile (outfitRecord: OutfitRecord) {
+    const profile = readUserStyleProfile()
+    const preferences = outfitRecord.extractedPreferences
+    const nextProfile: UserStyleProfile = {
+      updatedAt: new Date().toISOString(),
+      sceneTags: mergeTagCounters(profile.sceneTags, preferences.sceneTags),
+      styleTags: mergeTagCounters(profile.styleTags, preferences.styleTags),
+      colorTags: mergeTagCounters(profile.colorTags, preferences.colorTags),
+      avoidTags: mergeTagCounters(profile.avoidTags, preferences.avoidTags),
+      lastOutfitIds: [outfitRecord.id, ...profile.lastOutfitIds.filter(id => id !== outfitRecord.id)].slice(0, 20)
+    }
+
+    writeUserStyleProfile(nextProfile)
   }
 
   function handleBackToMatch () {
@@ -463,10 +754,21 @@ export default function Index () {
 
     return (
       <View className={`clothing-card clothing-card--${size} ${item.tone} ${isSelected ? 'is-selected' : ''}`}>
-        <View className='clothing-card__hanger' />
-        <View className='clothing-card__body'>
-          <View className='clothing-card__neck' />
-        </View>
+        {item.localPath ? (
+          <Image className='clothing-card__image' src={item.localPath} mode='aspectFill' />
+        ) : (
+          <>
+            <View className='clothing-card__hanger' />
+            <View className='clothing-card__body'>
+              <View className='clothing-card__neck' />
+            </View>
+          </>
+        )}
+        {item.categorySource && (
+          <Text className={`clothing-card__source clothing-card__source--${item.categorySource}`}>
+            {item.categorySource === 'ai' ? 'AI' : item.categorySource === 'manual' ? '手动' : '未识别'}
+          </Text>
+        )}
         <Text className='clothing-card__label'>{item.label}</Text>
       </View>
     )
@@ -569,7 +871,7 @@ export default function Index () {
             <Button className='plain-button' onTap={resetToHome}>返回</Button>
           </View>
           <View className='capture__content'>
-            {renderClothingCard({ id: 0, label: '拍照结果', tone: 'tone-2', category: 'top' }, 'result')}
+            {renderClothingCard({ id: 'capture_result', label: '拍照结果', tone: 'tone-2', category: 'top' }, 'result')}
           </View>
           <Button className='primary-button' onTap={resetToHome}>完成</Button>
         </View>
@@ -585,30 +887,61 @@ export default function Index () {
 
           <View className={`match__workspace ${selectedItem ? 'has-panel' : ''}`}>
             <View className='grid'>
-              {matchItems.map(item => (
-                <View key={item.id} className='grid__cell' onTap={() => handlePickItem(item)}>
-                  {renderClothingCard(item)}
+              {matchItems.length > 0 ? (
+                matchItems.map(item => (
+                  <View key={item.id} className='grid__cell' onTap={() => handlePickItem(item)}>
+                    {renderClothingCard(item)}
+                  </View>
+                ))
+              ) : (
+                <View className='empty-state'>
+                  <Text className='empty-state__title'>暂无{getCategoryLabel(matchCategory)}单品</Text>
+                  <Text className='empty-state__hint'>先去拍新衣服，系统会自动归类到这里。</Text>
                 </View>
-              ))}
+              )}
             </View>
 
             <View className={`recommend-panel ${selectedItem ? 'is-open' : ''}`}>
-              <Text className='recommend-panel__title'>推荐搭配</Text>
-              <Text className='recommend-panel__hint'>点击一个推荐单品继续</Text>
-              <View className='recommend-list'>
-                {recommendationItems.map(item => (
-                  <View key={item.id} className='recommend-list__item' onTap={() => handlePickRecommendation(item)}>
-                    {renderClothingCard(item, 'recommend')}
+              {selectedItem?.category === 'unknown' ? (
+                <>
+                  <Text className='recommend-panel__title'>补充分类</Text>
+                  <Text className='recommend-panel__hint'>未识别单品需要先手动归类。</Text>
+                  <View className='manual-category-list'>
+                    {manualCategoryOptions.map(category => (
+                      <Button
+                        key={category.key}
+                        className='manual-category-button'
+                        onTap={() => handleSetManualCategory(category.key)}
+                      >
+                        {category.label}
+                      </Button>
+                    ))}
                   </View>
-                ))}
-              </View>
-              <Button
-                className='manual-pick-button'
-                disabled={!selectedItem}
-                onTap={() => setScreen('manualPick')}
-              >
-                自己选一件
-              </Button>
+                </>
+              ) : (
+                <>
+                  <Text className='recommend-panel__title'>推荐搭配</Text>
+                  <Text className='recommend-panel__hint'>点击一个推荐单品继续</Text>
+                  <View className='recommend-list'>
+                    {recommendationItems.length > 0 ? (
+                      recommendationItems.map(item => (
+                        <View key={item.id} className='recommend-list__item' onTap={() => handlePickRecommendation(item)}>
+                          {renderClothingCard(item, 'recommend')}
+                        </View>
+                      ))
+                    ) : (
+                      <Text className='recommend-panel__empty'>当前分类还没有可推荐单品</Text>
+                    )}
+                  </View>
+                  <Button
+                    className='manual-pick-button'
+                    disabled={!selectedItem}
+                    onTap={() => setScreen('manualPick')}
+                  >
+                    自己选一件
+                  </Button>
+                </>
+              )}
             </View>
           </View>
         </View>
