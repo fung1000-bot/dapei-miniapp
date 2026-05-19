@@ -51,6 +51,11 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
       },
       webpackChain(chain) {
         chain.resolve.plugin('tsconfig-paths').use(TsconfigPathsPlugin)
+        chain.plugin('define-process').use(require('webpack').DefinePlugin, [{
+          'process.env.NODE_ENV': JSON.stringify(mode || 'production'),
+          'process.env': JSON.stringify({}),
+          'process': JSON.stringify({ env: {} }),
+        }])
       }
     },
     h5: {

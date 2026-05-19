@@ -3,6 +3,24 @@ import { Button, Camera, Image, Input, Text, View } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 import './index.scss'
 
+declare const requirePlugin: (pluginId: string) => any
+
+type WechatSIStopResult = {
+  tempFilePath: string
+  duration: number
+  fileSize: number
+  result: string
+}
+
+type WechatSIManager = {
+  start: (opts: { lang: string }) => void
+  stop: () => void
+  onStart: ((res: any) => void) | null
+  onStop: ((res: WechatSIStopResult) => void) | null
+  onRecognize: ((res: { result: string }) => void) | null
+  onError: ((res: { retcode: number; errMsg: string }) => void) | null
+}
+
 type Screen = 'home' | 'camera' | 'captureResult' | 'match' | 'manualPick' | 'confirm'
 type ClothingCategory = 'top' | 'bottom' | 'dress' | 'set' | 'unknown'
 type CategorySource = 'ai' | 'manual' | 'unknown'
@@ -329,6 +347,7 @@ export default function Index () {
   const [showGuideButtons, setShowGuideButtons] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [voiceNote, setVoiceNote] = useState<VoiceNote | null>(null)
+  const [finalTranscript, setFinalTranscript] = useState('')
   const [extractedPreferences, setExtractedPreferences] = useState<ExtractedPreferences>(createEmptyPreferences)
   const [flashMode, setFlashMode] = useState<FlashMode>('auto')
   const [wardrobeItems, setWardrobeItems] = useState<WardrobeItem[]>([])
@@ -339,10 +358,12 @@ export default function Index () {
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const guideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const analysisTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const stopFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const noteRef = useRef('')
-  const recorderManagerRef = useRef<ReturnType<typeof Taro.getRecorderManager> | null>(null)
+  const recorderManagerRef = useRef<WechatSIManager | null>(null)
   const isRecorderActiveRef = useRef(false)
   const shouldDiscardRecorderStopRef = useRef(false)
+  const finalTranscriptRef = useRef('')
   const catalogItems = wardrobeItems.length > 0 ? wardrobeItems.map(mapWardrobeItemToClothingItem) : clothingItems
   const matchItems = catalogItems.filter(item => item.category === matchCategory)
   const manualPickItems = catalogItems.filter(item => item.category === manualPickCategory)
@@ -354,25 +375,50 @@ export default function Index () {
 
   useEffect(() => {
     refreshWardrobeItems()
-    const recorderManager = Taro.getRecorderManager()
 
-    recorderManagerRef.current = recorderManager
-    recorderManager.onStop(result => {
-      handleRecorderStop(result)
-    })
-    recorderManager.onError(() => {
-      isRecorderActiveRef.current = false
-      clearRecordTimers()
-      setRecordState('idle')
-      setIsAnalyzing(false)
-      showDemoToast('录音失败，请重试')
-    })
+    let recorderManager: WechatSIManager | null = null
+    let useFallback = false
+
+    try {
+      const plugin = requirePlugin('WechatSI')
+      recorderManager = plugin.getRecordRecognitionManager()
+    } catch (error) {
+      console.warn('[WechatSI] plugin unavailable, falling back to native recorder', error)
+      useFallback = true
+    }
+
+    if (useFallback) {
+      const nativeManager = Taro.getRecorderManager()
+      recorderManagerRef.current = nativeManager as unknown as WechatSIManager
+      nativeManager.onStop(result => {
+        handleRecorderStop({ ...result, result: '' })
+      })
+      nativeManager.onError(() => {
+        isRecorderActiveRef.current = false
+        clearRecordTimers()
+        setRecordState('idle')
+        setIsAnalyzing(false)
+        showDemoToast('录音失败，请重试')
+      })
+    } else if (recorderManager) {
+      recorderManagerRef.current = recorderManager
+      recorderManager.onStop = result => {
+        handleRecorderStop(result)
+      }
+      recorderManager.onError = () => {
+        isRecorderActiveRef.current = false
+        clearRecordTimers()
+        setRecordState('idle')
+        setIsAnalyzing(false)
+        showDemoToast('录音失败，请重试')
+      }
+    }
 
     return () => {
       clearRecordTimers()
       if (isRecorderActiveRef.current) {
         shouldDiscardRecorderStopRef.current = true
-        recorderManager.stop()
+        recorderManagerRef.current?.stop()
       }
     }
   }, [])
@@ -446,6 +492,11 @@ export default function Index () {
       clearTimeout(analysisTimerRef.current)
       analysisTimerRef.current = null
     }
+
+    if (stopFallbackTimerRef.current) {
+      clearTimeout(stopFallbackTimerRef.current)
+      stopFallbackTimerRef.current = null
+    }
   }
 
   function resetVoiceDemo () {
@@ -460,6 +511,8 @@ export default function Index () {
     setShowGuideButtons(false)
     setIsAnalyzing(false)
     setVoiceNote(null)
+    setFinalTranscript('')
+    finalTranscriptRef.current = ''
     setExtractedPreferences(createEmptyPreferences())
   }
 
@@ -506,13 +559,7 @@ export default function Index () {
     isRecorderActiveRef.current = true
 
     try {
-      recorderManager.start({
-        duration: 120000,
-        format: 'mp3',
-        sampleRate: 16000,
-        numberOfChannels: 1,
-        encodeBitRate: 48000
-      })
+      recorderManager.start({ lang: 'zh_CN' })
     } catch (error) {
       isRecorderActiveRef.current = false
       clearRecordTimers()
@@ -527,12 +574,28 @@ export default function Index () {
     setIsAnalyzing(true)
 
     recorderManagerRef.current?.stop()
+
+    // WechatSI 的 onStop 需要等 STT 完成才触发，服务不可用时永远不触发
+    // 20 秒后强制复位，避免界面永久卡在"正在保存"
+    stopFallbackTimerRef.current = setTimeout(() => {
+      if (isRecorderActiveRef.current) {
+        isRecorderActiveRef.current = false
+        setRecordState('idle')
+        setIsAnalyzing(false)
+        showDemoToast('语音识别超时，录音未保存，请重试')
+      }
+    }, 20000)
   }
 
-  async function handleRecorderStop (result: Taro.RecorderManager.OnStopCallbackResult) {
+  async function handleRecorderStop (result: WechatSIStopResult) {
     if (!isRecorderActiveRef.current) return
 
     isRecorderActiveRef.current = false
+
+    if (stopFallbackTimerRef.current) {
+      clearTimeout(stopFallbackTimerRef.current)
+      stopFallbackTimerRef.current = null
+    }
     if (shouldDiscardRecorderStopRef.current) {
       shouldDiscardRecorderStopRef.current = false
       return
@@ -540,6 +603,10 @@ export default function Index () {
 
     clearRecordTimers()
     setShowGuideButtons(false)
+
+    const transcriptText = result.result || ''
+    finalTranscriptRef.current = transcriptText
+    setFinalTranscript(transcriptText)
 
     try {
       const savedVoiceNote = await saveVoiceNoteFile(result.tempFilePath, result.duration)
@@ -573,10 +640,13 @@ export default function Index () {
       throw new Error('Cloud development is not available.')
     }
 
-    const result = await wx.cloud.uploadFile({
-      cloudPath,
-      filePath
-    })
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('云端上传超时')), 30000)
+    )
+    const result = await Promise.race([
+      wx.cloud.uploadFile({ cloudPath, filePath }) as Promise<{ fileID: string }>,
+      timeoutPromise
+    ])
 
     return result.fileID
   }
@@ -870,13 +940,13 @@ export default function Index () {
       noteText: note,
       voiceNote,
       transcript: {
-        text: '',
-        source: voiceNote ? 'pending' : 'mock',
-        updatedAt: ''
+        text: finalTranscriptRef.current,
+        source: finalTranscriptRef.current ? 'stt' : (voiceNote ? 'pending' : 'mock'),
+        updatedAt: finalTranscriptRef.current ? new Date().toISOString() : ''
       },
       extractedPreferences,
       aiStatus: {
-        stt: voiceNote ? 'pending' : 'skipped',
+        stt: finalTranscriptRef.current ? 'done' : (voiceNote ? 'pending' : 'skipped'),
         preferenceExtract: 'done'
       }
     }
@@ -900,7 +970,7 @@ export default function Index () {
   ): Promise<OutfitRecord> {
     let nextOutfitRecord = outfitRecord
 
-    if (outfitRecord.voiceNote?.cloudFileId) {
+    if (outfitRecord.voiceNote?.cloudFileId && outfitRecord.aiStatus.stt !== 'done') {
       try {
         const transcriptResult = await wx.cloud?.callFunction({
           name: 'transcribeVoice',
@@ -1305,7 +1375,7 @@ export default function Index () {
             <View className={`voice-demo-card voice-demo-card--${recordState}`}>
               <Text className='voice-demo-badge'>真实录音</Text>
               <Text className='voice-demo-title'>
-                {recordState === 'recording' ? '正在录音...' : isAnalyzing ? '正在保存录音...' : recordState === 'done' ? '录音已保存，已生成搭配偏好' : '点击录音，说说为什么这样搭'}
+                {recordState === 'recording' ? '正在录音...' : isAnalyzing ? '正在保存录音...' : recordState === 'done' ? (finalTranscript ? '录音完成，语音已识别' : '录音已保存') : '点击录音，说说为什么这样搭'}
               </Text>
               {recordState === 'recording' && (
                 <Text className='voice-demo-timer'>{formatRecordTime(recordSeconds)}</Text>
@@ -1335,13 +1405,18 @@ export default function Index () {
               {recordState === 'done' && !isAnalyzing && (
                 <View className='voice-result-card'>
                   <Text className='voice-result-title'>本次搭配偏好（待接 AI）</Text>
+                  {finalTranscript !== '' && (
+                    <Text className='voice-final-transcript'>{finalTranscript}</Text>
+                  )}
                   <View className='voice-result-list'>
                     <Text className='voice-result-item'>场合：{extractedPreferences.sceneTags[0] || '待提取'}</Text>
                     <Text className='voice-result-item'>风格：{extractedPreferences.styleTags[0] || '待提取'}</Text>
                     <Text className='voice-result-item'>颜色：{extractedPreferences.colorTags[0] || '待提取'}</Text>
                   </View>
                   <Text className='voice-result-summary'>
-                    {voiceNote ? `录音 ${Math.max(1, Math.round(voiceNote.duration / 1000))} 秒已保存。后续接入 STT 后会从语音中提取真实偏好。` : '录音已保存。'}
+                    {voiceNote
+                      ? `录音 ${Math.max(1, Math.round(voiceNote.duration / 1000))} 秒已保存${finalTranscript ? '，语音已识别' : ''}。`
+                      : '录音已保存。'}
                   </Text>
                   <View className='voice-result-actions'>
                     <Button className='voice-result-button' onTap={resetVoiceDemo}>重新录音</Button>

@@ -15,5 +15,11 @@ export default defineAppConfig({
     'scope.writePhotosAlbum': {
       desc: '用于把拍摄的服装照片保存到手机相册'
     }
+  },
+  plugins: {
+    WechatSI: {
+      version: '0.3.7',
+      provider: 'wx069ba97219f66d99'
+    }
   }
 })

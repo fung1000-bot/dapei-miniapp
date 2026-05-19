@@ -760,6 +760,31 @@ page {
   text-align: center;
 }
 
+.voice-live-transcript {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(223, 68, 62, 0.06);
+  color: #3d2a1d;
+  font-size: 26px;
+  line-height: 1.55;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.voice-final-transcript {
+  width: 100%;
+  padding: 16px 18px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  background: rgba(47, 93, 80, 0.07);
+  color: #1e3d35;
+  font-size: 26px;
+  line-height: 1.6;
+  text-align: left;
+  box-sizing: border-box;
+}
+
 .voice-guide-row {
   display: grid;
   width: 100%;

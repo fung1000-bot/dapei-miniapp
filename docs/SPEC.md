@@ -21,6 +21,8 @@
 - 当前实现：单页状态机，主要业务集中在 `src/pages/index/index.tsx`。
 - 小程序配置：`src/app.config.ts`、`src/pages/index/index.config.ts`。
 - 无自建后端服务，当前使用微信小程序云开发：云数据库保存业务数据，云存储保存衣服图片和录音文件。
+- 已接入微信 **同声传译插件**（WechatSI，插件 ID `wx069ba97219f66d99`，版本 `0.3.7`）用于实时语音转文字，在 `src/app.config.ts` 的 `plugins` 字段中声明。
+- Webpack 构建配置（`config/index.ts`）已在 `mini.webpackChain` 中加入 `DefinePlugin`，将 `process.env.NODE_ENV` / `process` 替换为字符串字面量，避免微信小程序运行时出现 `process is not defined` 错误。
 
 常用命令：
 
@@ -137,24 +139,25 @@ npm run dev:weapp
 确认页展示两件已选单品，并提供：
 
 - 补充说明输入框。
-- 真实录音入口。
+- 真实录音入口（含实时字幕）。
 - 保存搭配按钮。
 
-当前录音能力：
+当前录音与 STT 能力：
 
-- 使用 `Taro.getRecorderManager()`。
-- 录音格式：`mp3`。
-- 采样率：`16000`。
-- 声道：单声道。
-- 码率：`48000`。
-- 最长录音时长：120 秒。
-- 录音停止后使用 `Taro.saveFile` 保存成本地持久文件。
+- 使用微信 **同声传译插件**（WechatSI）的 `getRecordRecognitionManager()` 替代原生 `Taro.getRecorderManager()`，由微信在端侧完成实时语音识别，无需额外 API 费用。
+- 录音格式：`mp3`，采样率 `16000`，单声道，码率 `48000`。
+- 最长录音时长：**60 秒**（插件限制，原生方案为 120 秒）。
+- 录音过程中，`onRecognize` 回调实时返回中间识别结果，页面以 `.voice-live-transcript` 样式展示实时字幕。
+- 录音结束时，`onStop` 返回 `{ tempFilePath, duration, fileSize, result }`，其中 `result` 为最终完整识别文本，直接写入 `transcript.text`，`source` 置为 `stt`，`aiStatus.stt` 置为 `done`。
+- 录音停止后使用 `Taro.saveFile` 保存成本地持久文件，并上传云存储保留原始音频。
+- 识别完成的文字在结果卡片以 `.voice-final-transcript` 样式展示。
+- 如果插件加载失败（`requirePlugin` 抛出异常），代码自动回退到原生 `Taro.getRecorderManager()`，不阻断录音流程，但没有实时字幕和自动识别。
 
-当前偏好提取已接入云函数代理，但保留本地 mock 兜底：
+当前偏好提取保留本地 mock 兜底：
 
 - 录音结束后，页面先用 `mockExtractPreferences(noteText)` 生成即时反馈，避免用户等待。
-- 保存搭配时调用 `transcribeVoice` 和 `extractStylePreference` 云函数。
-- 如果云函数配置完整，云端会写回真实 transcript 和 extractedPreferences。
+- 保存搭配时调用 `extractStylePreference` 云函数。如果云函数配置完整，云端会写回真实 extractedPreferences。
+- `transcribeVoice` 云函数当 `aiStatus.stt === 'done'` 时会被跳过（插件已在端侧完成），仅在回退到原生录音且无识别文字时才会被调用。
 - 如果云函数未配置或失败，搭配仍保存，本地 mock 偏好继续用于当前画像沉淀。
 
 当前保存限制：
@@ -364,13 +367,23 @@ STYLE_PREFERENCE_MODEL=
 - 返回标签可以合并到 `tags`。
 - 如果云函数未配置 API URL，前端会回退到当前 mock 分类，保证测试流程继续可用。
 
-### 5.2 Speech to Text API
+### 5.2 Speech to Text
 
-替换位置：
+**当前实现：微信同声传译插件（已上线，免费）**
+
+STT 已由 WechatSI 插件在端侧完成，无需额外 API 费用或云函数配置。`transcribeVoice` 云函数仅在插件不可用（回退到原生录音）时才会被调用。
+
+插件接入位置：
+
+- `src/app.config.ts`：`plugins.WechatSI` 声明。
+- `src/pages/index/index.tsx`：`useEffect` 内 `requirePlugin('WechatSI').getRecordRecognitionManager()`。
+- `onRecognize` → `setLiveTranscript()`（实时字幕）。
+- `onStop` → `handleRecorderStop(result)`，`result.result` 即最终文字。
+
+如果未来需要替换为自有 STT API（更高准确率、方言支持等），替换位置：
 
 - 云函数：`cloudfunctions/transcribeVoice`
-- 前端入口：`enrichOutfitRecordWithAi(...)`
-- 录音保存完成后会上传云存储并保存 `voiceNote.cloudFileId`，保存搭配时调用 STT。
+- 前端入口：`enrichOutfitRecordWithAi(...)`（目前在 `aiStatus.stt !== 'done'` 时才调用）
 
 建议真实 API 输入：
 
@@ -394,13 +407,9 @@ STYLE_PREFERENCE_MODEL=
 
 接入要求：
 
-- STT 成功后更新 `outfitRecords[].transcript`：
-  - `text` 为识别文字。
-  - `source` 为 `stt`。
-  - `updatedAt` 为当前 ISO 时间。
+- STT 成功后更新 `outfitRecords[].transcript`：`text` 为识别文字，`source` 为 `stt`，`updatedAt` 为当前 ISO 时间。
 - STT 失败时 `aiStatus.stt` 标记为 `failed`，不要丢失原始录音。
 - 用户仍应能保存搭配，后续可补偿处理。
-- 如果云函数未配置 API URL，搭配仍会保存，`transcript` 保持待处理状态。
 
 ### 5.3 搭配偏好提取 API
 
@@ -507,10 +516,18 @@ permission: {
   'scope.writePhotosAlbum': {
     desc: '用于把拍摄的服装照片保存到手机相册'
   }
+},
+plugins: {
+  WechatSI: {
+    version: '0.3.7',
+    provider: 'wx069ba97219f66d99'
+  }
 }
 ```
 
-重设计或 API 接入时不要删除这些权限。
+重设计或 API 接入时不要删除这些权限和插件声明。
+
+**同声传译插件接入前提**：必须在微信公众平台（mp.weixin.qq.com）→ 小程序管理后台 → 设置 → 第三方服务 → 插件管理，搜索并添加插件 `wx069ba97219f66d99`（同声传译）。添加成功后，`plugins` 字段才能在微信开发者工具中正常加载；否则会导致白屏（微信运行时在 JS 执行前加载插件，加载失败时 React 渲染器无法初始化）。
 
 云开发控制台需要先创建以下集合：
 
@@ -557,7 +574,10 @@ permission: {
 8. 未识别单品可以手动分类。
 9. 可选择推荐单品或手动选择另一件。
 10. 确认页可以录音、保存录音文件、保存搭配记录。
-11. 保存搭配后回到首页。
+11. 录音过程中出现实时字幕（`.voice-live-transcript`）。
+12. 录音结束后显示最终识别文字（`.voice-final-transcript`）。
+13. 保存搭配后，`outfitRecords` 中 `transcript.source` 为 `stt`、`aiStatus.stt` 为 `done`。
+14. 保存搭配后回到首页。
 
 ### 9.2 API 接入后验收
 
