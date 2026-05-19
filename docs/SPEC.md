@@ -80,13 +80,14 @@ npm run dev:weapp
 - `set`：套装
 - `unknown`：未识别
 
-当前自动识别是 mock：
+当前自动识别已接入云函数代理：
 
 - 新拍衣服先保存为 `unknown`。
-- 然后调用 `mockRecognizeCategory(itemId)` 模拟 AI 分类。
+- 然后调用云函数 `recognizeClothing`，由云函数读取 API 环境变量并调用图片识别 API。
 - 如果识别为 `unknown`，后续在搭配页提供手动补充分类入口。
+- 如果云函数未配置或调用失败，前端会回退到 `mockRecognizeCategory(itemId)`，保证测试流程继续可用。
 
-后续接入真实 API 时，应替换 `mockRecognizeCategory`，不要改变分类字段语义。
+后续更换 API 服务商时，只应改云函数请求适配层，不要改变分类字段语义。
 
 ### 3.4 搭衣服
 
@@ -149,10 +150,12 @@ npm run dev:weapp
 - 最长录音时长：120 秒。
 - 录音停止后使用 `Taro.saveFile` 保存成本地持久文件。
 
-当前偏好提取是 mock：
+当前偏好提取已接入云函数代理，但保留本地 mock 兜底：
 
-- `mockExtractPreferences(noteText)` 会生成固定偏好标签。
-- 真实语音转文字和偏好提取还未接 API。
+- 录音结束后，页面先用 `mockExtractPreferences(noteText)` 生成即时反馈，避免用户等待。
+- 保存搭配时调用 `transcribeVoice` 和 `extractStylePreference` 云函数。
+- 如果云函数配置完整，云端会写回真实 transcript 和 extractedPreferences。
+- 如果云函数未配置或失败，搭配仍保存，本地 mock 偏好继续用于当前画像沉淀。
 
 当前保存限制：
 
@@ -297,13 +300,40 @@ type UserStyleProfile = {
 
 ## 5. 后续 API 接入点
 
+当前已经预留 3 个云函数作为 API 代理：
+
+- `recognizeClothing`：衣服图片识别。
+- `transcribeVoice`：语音转文字。
+- `extractStylePreference`：搭配偏好提取。
+
+API key 不能放在小程序前端包里。正式部署时，需要在微信开发者工具/云开发控制台里给对应云函数配置运行环境变量。仓库里的 `.env.example` 只作为字段模板，`.env.development`、`.env.production`、`.env.test` 是本机填写用，已被 `.gitignore` 忽略。
+
+需要填写的环境变量：
+
+```bash
+TARO_APP_ID=wx68b926a2b145ced0
+TARO_CLOUD_ENV_ID=xiaochengxu-d1gnauqul33de2ac9
+
+CLOTHING_RECOGNITION_API_URL=
+CLOTHING_RECOGNITION_API_KEY=
+CLOTHING_RECOGNITION_MODEL=
+
+SPEECH_TO_TEXT_API_URL=
+SPEECH_TO_TEXT_API_KEY=
+SPEECH_TO_TEXT_MODEL=
+
+STYLE_PREFERENCE_API_URL=
+STYLE_PREFERENCE_API_KEY=
+STYLE_PREFERENCE_MODEL=
+```
+
 ### 5.1 衣服图片识别 API
 
 替换位置：
 
 - `src/pages/index/index.tsx`
-- `mockRecognizeCategory(itemId)`
-- `recognizeAndUpdateCategory(itemId)`
+- 云函数：`cloudfunctions/recognizeClothing`
+- 前端入口：`recognizeAndUpdateCategory(itemId, currentItem)`
 
 建议真实 API 输入：
 
@@ -332,13 +362,15 @@ type UserStyleProfile = {
 - 失败时保持 `category: 'unknown'`、`categorySource: 'unknown'`。
 - 如果置信度过低，也应进入 `unknown`，让用户手动分类。
 - 返回标签可以合并到 `tags`。
+- 如果云函数未配置 API URL，前端会回退到当前 mock 分类，保证测试流程继续可用。
 
 ### 5.2 Speech to Text API
 
 替换位置：
 
-- 录音保存完成后会上传云存储并保存 `voiceNote.cloudFileId`。
-- 后续应在 `voiceNote.cloudFileId` 可用后调用 STT。
+- 云函数：`cloudfunctions/transcribeVoice`
+- 前端入口：`enrichOutfitRecordWithAi(...)`
+- 录音保存完成后会上传云存储并保存 `voiceNote.cloudFileId`，保存搭配时调用 STT。
 
 建议真实 API 输入：
 
@@ -368,12 +400,14 @@ type UserStyleProfile = {
   - `updatedAt` 为当前 ISO 时间。
 - STT 失败时 `aiStatus.stt` 标记为 `failed`，不要丢失原始录音。
 - 用户仍应能保存搭配，后续可补偿处理。
+- 如果云函数未配置 API URL，搭配仍会保存，`transcript` 保持待处理状态。
 
 ### 5.3 搭配偏好提取 API
 
 替换位置：
 
-- `mockExtractPreferences(freeText)`
+- 云函数：`cloudfunctions/extractStylePreference`
+- 前端入口：`enrichOutfitRecordWithAi(...)`
 
 建议真实 API 输入：
 
@@ -403,6 +437,7 @@ type UserStyleProfile = {
 - 输出字段必须兼容 `ExtractedPreferences`。
 - 提取失败时可保留空数组，不阻断保存。
 - 成功后继续调用当前 `updateUserStyleProfile` 逻辑沉淀画像。
+- 如果云函数未配置 API URL，前端继续使用当前本地 mock 偏好，保证流程不中断。
 
 ### 5.4 个性化搭配推荐 API
 
@@ -484,6 +519,14 @@ permission: {
 - `userStyleProfiles`
 
 当前 Demo 建议集合权限先设为“仅创建者可读写”。如果后续做店铺多人协作，再升级为带 `shopId` / `ownerId` 的权限模型。
+
+云函数需要在微信开发者工具里上传并部署：
+
+- `recognizeClothing`
+- `transcribeVoice`
+- `extractStylePreference`
+
+部署后，在每个云函数的环境变量里填写对应 API 字段。不要把真实 API key 写进 Git。
 
 ## 8. 当前非目标
 

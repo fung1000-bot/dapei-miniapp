@@ -3,7 +3,7 @@ import { useLaunch } from '@tarojs/taro'
 
 import './app.scss'
 
-const CLOUD_ENV_ID = 'xiaochengxu-d1gnauqul33de2ac9'
+const CLOUD_ENV_ID = process.env.TARO_CLOUD_ENV_ID || 'xiaochengxu-d1gnauqul33de2ac9'
 
 function App({ children }: PropsWithChildren<any>) {
   useLaunch(() => {

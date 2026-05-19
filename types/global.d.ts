@@ -17,6 +17,7 @@ declare const wx: {
     database: () => any
     uploadFile: (options: { cloudPath: string, filePath: string }) => Promise<{ fileID: string }>
     deleteFile: (options: { fileList: string[] }) => Promise<any>
+    callFunction: (options: { name: string, data?: object }) => Promise<{ result: any }>
   }
 }
 
@@ -32,6 +33,6 @@ declare namespace NodeJS {
      * @see https://taro-docs.jd.com/docs/next/env-mode-config#特殊环境变量-taro_app_id
      */
     TARO_APP_ID: string
+    TARO_CLOUD_ENV_ID: string
   }
 }
-

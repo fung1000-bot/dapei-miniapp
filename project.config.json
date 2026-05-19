@@ -1,5 +1,6 @@
 {
   "miniprogramRoot": "./dist",
+  "cloudfunctionRoot": "./cloudfunctions",
   "projectname": "sbti-miniapp",
   "description": "cd sbti-miniapp",
   "appid": "wx68b926a2b145ced0",

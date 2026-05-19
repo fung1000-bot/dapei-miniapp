@@ -638,7 +638,7 @@ export default function Index () {
 
       setCapturedItems(items => [wardrobeItem, ...items])
       setCapturePreviewIndex(0)
-      recognizeAndUpdateCategory(wardrobeItem.id)
+      recognizeAndUpdateCategory(wardrobeItem.id, wardrobeItem)
       Taro.vibrateShort({ type: 'light' }).catch(() => undefined)
     } catch (error) {
       console.error('[camera] unexpected capture flow failed', error)
@@ -704,11 +704,56 @@ export default function Index () {
     return wardrobeItem
   }
 
-  async function recognizeAndUpdateCategory (itemId: string) {
+  async function recognizeAndUpdateCategory (itemId: string, currentItem?: WardrobeItem) {
+    const targetItem = currentItem || [...capturedItems, ...wardrobeItems].find(item => item.id === itemId)
+
+    if (targetItem?.cloudFileId) {
+      try {
+        const result = await wx.cloud?.callFunction({
+          name: 'recognizeClothing',
+          data: {
+            itemId,
+            cloudFileId: targetItem.cloudFileId
+          }
+        })
+        const recognition = result?.result
+
+        if (recognition?.ok) {
+          const category = normalizeClothingCategory(recognition.category)
+          const categorySource: CategorySource = category === 'unknown' ? 'unknown' : 'ai'
+
+          applyWardrobeItemPatchLocally(itemId, {
+            category,
+            categorySource,
+            tags: Array.isArray(recognition.tags) ? recognition.tags : targetItem.tags,
+            color: typeof recognition.color === 'string' ? recognition.color : targetItem.color,
+            name: typeof recognition.name === 'string' ? recognition.name : targetItem.name
+          })
+          return
+        }
+      } catch (error) {
+        console.error('[cloud] recognize clothing failed, fallback to mock', error)
+      }
+    }
+
     const category = await mockRecognizeCategory(itemId)
     const categorySource: CategorySource = category === 'unknown' ? 'unknown' : 'ai'
-
     await updateWardrobeItemCategory(itemId, category, categorySource)
+  }
+
+  function normalizeClothingCategory (category: unknown): ClothingCategory {
+    if (category === 'top' || category === 'bottom' || category === 'dress' || category === 'set') {
+      return category
+    }
+
+    return 'unknown'
+  }
+
+  function applyWardrobeItemPatchLocally (itemId: string, patch: Partial<WardrobeItem>) {
+    setWardrobeItems(items => items.map(item => item.id === itemId ? { ...item, ...patch } : item))
+    setSelectedItem(item => item?.id === itemId ? { ...item, ...patch } : item)
+    setSelectedRecommendation(item => item?.id === itemId ? { ...item, ...patch } : item)
+    setCapturedItems(items => items.map(item => item.id === itemId ? { ...item, ...patch } : item))
   }
 
   function mockRecognizeCategory (itemId: string) {
@@ -838,13 +883,94 @@ export default function Index () {
 
     try {
       await addOutfitRecord(outfitRecord)
-      await updateWardrobeItemsForOutfit(outfitRecord)
-      await updateUserStyleProfile(outfitRecord)
+      const enrichedOutfitRecord = await enrichOutfitRecordWithAi(outfitRecord, [selectedItem, selectedRecommendation])
+
+      await updateWardrobeItemsForOutfit(enrichedOutfitRecord)
+      await updateUserStyleProfile(enrichedOutfitRecord)
       showDemoToast('搭配已保存')
       resetToHome()
     } catch (error) {
       showDemoToast('搭配保存失败，请重试')
     }
+  }
+
+  async function enrichOutfitRecordWithAi (
+    outfitRecord: OutfitRecord,
+    selectedItems: ClothingItem[]
+  ): Promise<OutfitRecord> {
+    let nextOutfitRecord = outfitRecord
+
+    if (outfitRecord.voiceNote?.cloudFileId) {
+      try {
+        const transcriptResult = await wx.cloud?.callFunction({
+          name: 'transcribeVoice',
+          data: {
+            outfitId: outfitRecord.id,
+            audioCloudFileId: outfitRecord.voiceNote.cloudFileId,
+            duration: outfitRecord.voiceNote.duration,
+            format: outfitRecord.voiceNote.format
+          }
+        })
+        const transcriptResponse = transcriptResult?.result
+
+        if (transcriptResponse?.ok && transcriptResponse.transcript) {
+          nextOutfitRecord = {
+            ...nextOutfitRecord,
+            transcript: transcriptResponse.transcript,
+            aiStatus: {
+              ...nextOutfitRecord.aiStatus,
+              stt: 'done'
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[cloud] transcribe voice failed, keep pending transcript', error)
+        nextOutfitRecord = {
+          ...nextOutfitRecord,
+          aiStatus: {
+            ...nextOutfitRecord.aiStatus,
+            stt: 'failed'
+          }
+        }
+      }
+    }
+
+    try {
+      const existingProfile = await readUserStyleProfile()
+      const preferenceResult = await wx.cloud?.callFunction({
+        name: 'extractStylePreference',
+        data: {
+          outfitId: outfitRecord.id,
+          noteText: outfitRecord.noteText,
+          transcriptText: nextOutfitRecord.transcript.text,
+          selectedItems,
+          existingProfile
+        }
+      })
+      const preferenceResponse = preferenceResult?.result
+
+      if (preferenceResponse?.ok && preferenceResponse.extractedPreferences) {
+        nextOutfitRecord = {
+          ...nextOutfitRecord,
+          extractedPreferences: preferenceResponse.extractedPreferences,
+          aiStatus: {
+            ...nextOutfitRecord.aiStatus,
+            preferenceExtract: 'done'
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[cloud] extract style preference failed, keep local mock preferences', error)
+      nextOutfitRecord = {
+        ...nextOutfitRecord,
+        aiStatus: {
+          ...nextOutfitRecord.aiStatus,
+          preferenceExtract: 'failed'
+        }
+      }
+    }
+
+    return nextOutfitRecord
   }
 
   async function updateWardrobeItemsForOutfit (outfitRecord: OutfitRecord) {
