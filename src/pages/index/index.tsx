@@ -17,11 +17,13 @@ type ClothingItem = {
   tone: string
   category: ClothingCategory
   localPath?: string
+  cloudFileId?: string
   categorySource?: CategorySource
 }
 
 type WardrobeItem = {
   id: string
+  cloudFileId: string
   localPath: string
   albumSaved: boolean
   createdAt: string
@@ -37,6 +39,7 @@ type WardrobeItem = {
 }
 
 type VoiceNote = {
+  cloudFileId: string
   localPath: string
   duration: number
   format: 'mp3'
@@ -84,6 +87,11 @@ type UserStyleProfile = {
   lastOutfitIds: string[]
 }
 
+const WARDROBE_COLLECTION = 'wardrobeItems'
+const OUTFIT_COLLECTION = 'outfitRecords'
+const PROFILE_COLLECTION = 'userStyleProfiles'
+const PROFILE_ID = 'default'
+
 const clothingCategories: { key: ClothingCategory, label: string }[] = [
   { key: 'top', label: '上衣' },
   { key: 'bottom', label: '下衣' },
@@ -112,14 +120,24 @@ function getCategoryLabel (category: ClothingCategory) {
   return categoryItem?.label ?? '未识别'
 }
 
-function readWardrobeItems () {
-  const storageItems = Taro.getStorageSync<Partial<WardrobeItem>[]>('wardrobeItems')
-  const wardrobeItems = Array.isArray(storageItems) ? storageItems : []
+function getCloudDatabase () {
+  if (!wx.cloud) {
+    throw new Error('Cloud development is not available.')
+  }
+
+  return wx.cloud.database()
+}
+
+async function readWardrobeItems () {
+  const database = getCloudDatabase()
+  const result = await database.collection(WARDROBE_COLLECTION).orderBy('createdAt', 'desc').get()
+  const wardrobeItems = Array.isArray(result.data) ? result.data : []
 
   return wardrobeItems
     .filter(item => Boolean(item.id && item.localPath))
     .map((item): WardrobeItem => ({
       id: String(item.id),
+      cloudFileId: String(item.cloudFileId || ''),
       localPath: String(item.localPath),
       albumSaved: Boolean(item.albumSaved),
       createdAt: item.createdAt || new Date().toISOString(),
@@ -135,8 +153,26 @@ function readWardrobeItems () {
     }))
 }
 
-function writeWardrobeItems (items: WardrobeItem[]) {
-  Taro.setStorageSync('wardrobeItems', items)
+async function addWardrobeItem (item: WardrobeItem) {
+  const database = getCloudDatabase()
+
+  await database.collection(WARDROBE_COLLECTION).add({
+    data: item
+  })
+}
+
+async function updateWardrobeItem (itemId: string, data: Partial<WardrobeItem>) {
+  const database = getCloudDatabase()
+
+  await database.collection(WARDROBE_COLLECTION).where({ id: itemId }).update({
+    data
+  })
+}
+
+async function deleteWardrobeItem (itemId: string) {
+  const database = getCloudDatabase()
+
+  await database.collection(WARDROBE_COLLECTION).where({ id: itemId }).remove()
 }
 
 function mapWardrobeItemToClothingItem (item: WardrobeItem, index: number): ClothingItem {
@@ -145,7 +181,8 @@ function mapWardrobeItemToClothingItem (item: WardrobeItem, index: number): Clot
     label: item.name || `${getCategoryLabel(item.category)}${index + 1}`,
     tone: `tone-${(index % 6) + 1}`,
     category: item.category,
-    localPath: item.localPath,
+    localPath: item.cloudFileId || item.localPath,
+    cloudFileId: item.cloudFileId,
     categorySource: item.categorySource
   }
 }
@@ -159,9 +196,10 @@ function getRecommendationCategories (category: ClothingCategory) {
   return []
 }
 
-function readOutfitRecords () {
-  const storageItems = Taro.getStorageSync<Partial<OutfitRecord>[]>('outfitRecords')
-  const outfitRecords = Array.isArray(storageItems) ? storageItems : []
+async function readOutfitRecords () {
+  const database = getCloudDatabase()
+  const result = await database.collection(OUTFIT_COLLECTION).orderBy('createdAt', 'desc').get()
+  const outfitRecords = Array.isArray(result.data) ? result.data : []
 
   return outfitRecords
     .filter(item => Boolean(item.id && Array.isArray(item.itemIds)))
@@ -184,12 +222,18 @@ function readOutfitRecords () {
     }))
 }
 
-function writeOutfitRecords (items: OutfitRecord[]) {
-  Taro.setStorageSync('outfitRecords', items)
+async function addOutfitRecord (item: OutfitRecord) {
+  const database = getCloudDatabase()
+
+  await database.collection(OUTFIT_COLLECTION).add({
+    data: item
+  })
 }
 
-function readUserStyleProfile () {
-  const profile = Taro.getStorageSync<Partial<UserStyleProfile>>('userStyleProfile')
+async function readUserStyleProfile () {
+  const database = getCloudDatabase()
+  const result = await database.collection(PROFILE_COLLECTION).where({ id: PROFILE_ID }).limit(1).get()
+  const profile = Array.isArray(result.data) ? result.data[0] : null
 
   return {
     updatedAt: profile?.updatedAt || '',
@@ -201,8 +245,23 @@ function readUserStyleProfile () {
   }
 }
 
-function writeUserStyleProfile (profile: UserStyleProfile) {
-  Taro.setStorageSync('userStyleProfile', profile)
+async function writeUserStyleProfile (profile: UserStyleProfile) {
+  const database = getCloudDatabase()
+  const result = await database.collection(PROFILE_COLLECTION).where({ id: PROFILE_ID }).limit(1).get()
+
+  if (Array.isArray(result.data) && result.data.length > 0) {
+    await database.collection(PROFILE_COLLECTION).where({ id: PROFILE_ID }).update({
+      data: profile
+    })
+    return
+  }
+
+  await database.collection(PROFILE_COLLECTION).add({
+    data: {
+      id: PROFILE_ID,
+      ...profile
+    }
+  })
 }
 
 function createEmptyPreferences (): ExtractedPreferences {
@@ -267,7 +326,7 @@ export default function Index () {
   const previewItem = capturedItems[capturePreviewIndex]
 
   useEffect(() => {
-    setWardrobeItems(readWardrobeItems())
+    refreshWardrobeItems()
     const recorderManager = Taro.getRecorderManager()
 
     recorderManagerRef.current = recorderManager
@@ -290,6 +349,14 @@ export default function Index () {
       }
     }
   }, [])
+
+  async function refreshWardrobeItems () {
+    try {
+      setWardrobeItems(await readWardrobeItems())
+    } catch (error) {
+      showDemoToast('云端衣橱加载失败')
+    }
+  }
 
   function resetToHome () {
     setScreen('home')
@@ -462,19 +529,28 @@ export default function Index () {
   }
 
   async function saveVoiceNoteFile (tempFilePath: string, duration: number) {
-    const savedFile = await new Promise<Taro.saveFile.SuccessCallbackResult>((resolve, reject) => {
-      Taro.saveFile({
-        tempFilePath,
-        success: resolve,
-        fail: reject
-      })
-    })
+    const voiceId = `voice_${Date.now()}`
+    const cloudFileId = await uploadCloudFile(`outfits/${voiceId}.mp3`, tempFilePath)
 
     return {
-      localPath: savedFile.savedFilePath,
+      cloudFileId,
+      localPath: tempFilePath,
       duration,
       format: 'mp3' as const
     }
+  }
+
+  async function uploadCloudFile (cloudPath: string, filePath: string) {
+    if (!wx.cloud) {
+      throw new Error('Cloud development is not available.')
+    }
+
+    const result = await wx.cloud.uploadFile({
+      cloudPath,
+      filePath
+    })
+
+    return result.fileID
   }
 
   function mockExtractPreferences (freeText: string): ExtractedPreferences {
@@ -552,18 +628,12 @@ export default function Index () {
   }
 
   async function savePhotoToWardrobe (tempImagePath: string, albumSaved: boolean) {
-    const savedFile = await new Promise<Taro.saveFile.SuccessCallbackResult>((resolve, reject) => {
-      Taro.saveFile({
-        tempFilePath: tempImagePath,
-        success: resolve,
-        fail: reject
-      })
-    })
-    const storageItems = Taro.getStorageSync<WardrobeItem[]>('wardrobeItems')
-    const wardrobeItems = Array.isArray(storageItems) ? storageItems : []
+    const itemId = `item_${Date.now()}`
+    const cloudFileId = await uploadCloudFile(`wardrobe/${itemId}.jpg`, tempImagePath)
     const wardrobeItem: WardrobeItem = {
-      id: `item_${Date.now()}`,
-      localPath: savedFile.savedFilePath,
+      id: itemId,
+      cloudFileId,
+      localPath: tempImagePath,
       albumSaved,
       createdAt: new Date().toISOString(),
       category: 'unknown',
@@ -577,10 +647,8 @@ export default function Index () {
       outfits: []
     }
 
-    const nextItems = [wardrobeItem, ...wardrobeItems]
-
-    writeWardrobeItems(nextItems)
-    setWardrobeItems(nextItems)
+    await addWardrobeItem(wardrobeItem)
+    setWardrobeItems(items => [wardrobeItem, ...items])
 
     return wardrobeItem
   }
@@ -589,7 +657,7 @@ export default function Index () {
     const category = await mockRecognizeCategory(itemId)
     const categorySource: CategorySource = category === 'unknown' ? 'unknown' : 'ai'
 
-    updateWardrobeItemCategory(itemId, category, categorySource)
+    await updateWardrobeItemCategory(itemId, category, categorySource)
   }
 
   function mockRecognizeCategory (itemId: string) {
@@ -602,12 +670,13 @@ export default function Index () {
     })
   }
 
-  function updateWardrobeItemCategory (
+  async function updateWardrobeItemCategory (
     itemId: string,
     category: ClothingCategory,
     categorySource: CategorySource
   ) {
-    const nextItems = readWardrobeItems().map(item => {
+    const currentItems = await readWardrobeItems()
+    const nextItems = currentItems.map(item => {
       if (item.id !== itemId) return item
 
       return {
@@ -620,7 +689,16 @@ export default function Index () {
       }
     })
 
-    writeWardrobeItems(nextItems)
+    const changedItem = nextItems.find(item => item.id === itemId)
+
+    if (changedItem) {
+      await updateWardrobeItem(itemId, {
+        category: changedItem.category,
+        categorySource: changedItem.categorySource,
+        tags: changedItem.tags
+      })
+    }
+
     setWardrobeItems(nextItems)
     setSelectedItem(item => item?.id === itemId ? { ...item, category, categorySource } : item)
     setSelectedRecommendation(item => item?.id === itemId ? { ...item, category, categorySource } : item)
@@ -649,15 +727,14 @@ export default function Index () {
     if (!previewItem) return
 
     const nextItems = capturedItems.filter(item => item.id !== previewItem.id)
-    const storageItems = Taro.getStorageSync<WardrobeItem[]>('wardrobeItems')
-    const wardrobeItems = Array.isArray(storageItems) ? storageItems : []
-
     const nextWardrobeItems = wardrobeItems.filter(item => item.id !== previewItem.id)
 
-    writeWardrobeItems(nextWardrobeItems)
-    setWardrobeItems(nextWardrobeItems)
+    await deleteWardrobeItem(previewItem.id).catch(() => undefined)
+    if (previewItem.cloudFileId) {
+      await wx.cloud?.deleteFile({ fileList: [previewItem.cloudFileId] }).catch(() => undefined)
+    }
 
-    await Taro.removeSavedFile({ filePath: previewItem.localPath }).catch(() => undefined)
+    setWardrobeItems(nextWardrobeItems)
 
     setCapturedItems(nextItems)
 
@@ -670,10 +747,10 @@ export default function Index () {
     setCapturePreviewIndex(index => Math.min(index, nextItems.length - 1))
   }
 
-  function handleSetManualCategory (category: ClothingCategory) {
+  async function handleSetManualCategory (category: ClothingCategory) {
     if (!selectedItem || selectedItem.id.startsWith('demo_')) return
 
-    updateWardrobeItemCategory(selectedItem.id, category, 'manual')
+    await updateWardrobeItemCategory(selectedItem.id, category, 'manual')
     setSelectedItem({
       ...selectedItem,
       category,
@@ -683,7 +760,7 @@ export default function Index () {
     showDemoToast(`已归类为${getCategoryLabel(category)}`)
   }
 
-  function handleSaveOutfit () {
+  async function handleSaveOutfit () {
     if (!selectedItem || !selectedRecommendation) return
 
     const now = new Date().toISOString()
@@ -705,17 +782,19 @@ export default function Index () {
       }
     }
 
-    const nextOutfits = [outfitRecord, ...readOutfitRecords()]
-
-    writeOutfitRecords(nextOutfits)
-    updateWardrobeItemsForOutfit(outfitRecord)
-    updateUserStyleProfile(outfitRecord)
-    showDemoToast('搭配已保存')
-    resetToHome()
+    try {
+      await addOutfitRecord(outfitRecord)
+      await updateWardrobeItemsForOutfit(outfitRecord)
+      await updateUserStyleProfile(outfitRecord)
+      showDemoToast('搭配已保存')
+      resetToHome()
+    } catch (error) {
+      showDemoToast('搭配保存失败，请重试')
+    }
   }
 
-  function updateWardrobeItemsForOutfit (outfitRecord: OutfitRecord) {
-    const nextItems = readWardrobeItems().map(item => {
+  async function updateWardrobeItemsForOutfit (outfitRecord: OutfitRecord) {
+    const nextItems = (await readWardrobeItems()).map(item => {
       if (!outfitRecord.itemIds.includes(item.id)) return item
 
       return {
@@ -725,8 +804,13 @@ export default function Index () {
         styleTags: mergeStyleTags(item.styleTags, outfitRecord.extractedPreferences.styleTags)
       }
     })
+    const changedItems = nextItems.filter(item => outfitRecord.itemIds.includes(item.id))
 
-    writeWardrobeItems(nextItems)
+    await Promise.all(changedItems.map(item => updateWardrobeItem(item.id, {
+      matchCount: item.matchCount,
+      outfits: item.outfits,
+      styleTags: item.styleTags
+    })))
     setWardrobeItems(nextItems)
   }
 
@@ -740,8 +824,8 @@ export default function Index () {
     return tags
   }
 
-  function updateUserStyleProfile (outfitRecord: OutfitRecord) {
-    const profile = readUserStyleProfile()
+  async function updateUserStyleProfile (outfitRecord: OutfitRecord) {
+    const profile = await readUserStyleProfile()
     const preferences = outfitRecord.extractedPreferences
     const nextProfile: UserStyleProfile = {
       updatedAt: new Date().toISOString(),
@@ -752,7 +836,7 @@ export default function Index () {
       lastOutfitIds: [outfitRecord.id, ...profile.lastOutfitIds.filter(id => id !== outfitRecord.id)].slice(0, 20)
     }
 
-    writeUserStyleProfile(nextProfile)
+    await writeUserStyleProfile(nextProfile)
   }
 
   function handleBackToMatch () {

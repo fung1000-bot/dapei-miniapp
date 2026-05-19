@@ -11,6 +11,15 @@ declare module '*.scss';
 declare module '*.sass';
 declare module '*.styl';
 
+declare const wx: {
+  cloud?: {
+    init: (options: { env: string, traceUser?: boolean }) => void
+    database: () => any
+    uploadFile: (options: { cloudPath: string, filePath: string }) => Promise<{ fileID: string }>
+    deleteFile: (options: { fileList: string[] }) => Promise<any>
+  }
+}
+
 declare namespace NodeJS {
   interface ProcessEnv {
     /** NODE 内置环境变量, 会影响到最终构建生成产物 */
@@ -25,5 +34,4 @@ declare namespace NodeJS {
     TARO_APP_ID: string
   }
 }
-
 
