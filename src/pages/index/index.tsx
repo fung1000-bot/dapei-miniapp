@@ -1128,21 +1128,29 @@ export default function Index () {
       {screen === 'home' && (
         <View className='home screen'>
           <View className='home__header'>
-            <Text className='eyebrow'>进货搭配测试原型</Text>
-            <Text className='title'>今天要做什么？</Text>
+            <Text className='eyebrow'>v0.1 · DEMO</Text>
+            <Text className='title'>今天{'\n'}搭什么？</Text>
+            <Text className='subtext'>衣橱 {catalogItems.length} 件</Text>
           </View>
 
           <View className='home__actions'>
             <Button className='action-card action-card--camera' onTap={() => setScreen('camera')}>
-              <Text className='action-card__icon'>CAM</Text>
+              <View className='icon-cam'>
+                <View className='icon-cam__bump' />
+                <View className='icon-cam__body'>
+                  <View className='icon-cam__lens' />
+                </View>
+              </View>
               <Text className='action-card__title'>拍新衣服</Text>
-              <Text className='action-card__hint'>模拟拍照并记录新货</Text>
+              <Text className='action-card__hint'>拍照后 AI 自动识别归类</Text>
             </Button>
 
             <Button className='action-card action-card--match' onTap={() => setScreen('match')}>
-              <Text className='action-card__icon'>SET</Text>
-              <Text className='action-card__title'>搭衣服</Text>
-              <Text className='action-card__hint'>选择单品查看推荐</Text>
+              <View className='action-card__content'>
+                <Text className='action-card__title'>搭衣服</Text>
+                <Text className='action-card__hint'>选单品查看推荐搭配</Text>
+              </View>
+              <Text className='action-card__arrow'>›</Text>
             </Button>
           </View>
         </View>
@@ -1160,14 +1168,14 @@ export default function Index () {
             <Text className='camera-count'>已拍 {capturedCount}</Text>
           </View>
           <View className='camera-overlay camera-overlay--bottom'>
-            <Button className='flash-button' onTap={handleFlashModeTap}>闪光灯 {flashMode}</Button>
+            <Button className='flash-button' onTap={handleFlashModeTap}>
+              {flashMode === 'auto' ? '闪光 自动' : flashMode === 'on' ? '闪光 开' : '闪光 关'}
+            </Button>
             <Button
               className={`shutter-button ${isTakingPhoto ? 'is-taking' : ''}`}
               disabled={isTakingPhoto}
               onTap={handleTakePhoto}
-            >
-              拍照
-            </Button>
+            />
             <View className={`capture-album ${capturedCount > 0 ? 'has-photo' : ''}`} onTap={handleOpenCapturePreview}>
               {capturedItems[0] ? (
                 <Image className='capture-album__image' src={capturedItems[0].localPath} mode='aspectFill' />
@@ -1234,7 +1242,7 @@ export default function Index () {
           </View>
           {renderCategoryTabs(matchCategory, handleChangeMatchCategory)}
 
-          <View className={`match__workspace ${selectedItem ? 'has-panel' : ''}`}>
+          <View className='match__workspace'>
             <View className='grid'>
               {matchItems.length > 0 ? (
                 matchItems.map(item => (
@@ -1249,49 +1257,64 @@ export default function Index () {
                 </View>
               )}
             </View>
+          </View>
 
-            <View className={`recommend-panel ${selectedItem ? 'is-open' : ''}`}>
-              {selectedItem?.category === 'unknown' ? (
-                <>
-                  <Text className='recommend-panel__title'>补充分类</Text>
-                  <Text className='recommend-panel__hint'>未识别单品需要先手动归类。</Text>
-                  <View className='manual-category-list'>
-                    {manualCategoryOptions.map(category => (
-                      <Button
-                        key={category.key}
-                        className='manual-category-button'
-                        onTap={() => handleSetManualCategory(category.key)}
-                      >
-                        {category.label}
-                      </Button>
+          {selectedItem && (
+            <View
+              className='match__overlay'
+              onTap={() => { setSelectedItem(null); setSelectedRecommendation(null) }}
+            />
+          )}
+
+          <View className={`recommend-drawer ${selectedItem ? 'is-open' : ''}`}>
+            <View className='recommend-drawer__handle' />
+            {selectedItem?.category === 'unknown' ? (
+              <>
+                <View className='recommend-drawer__header'>
+                  <Text className='recommend-drawer__title'>补充分类</Text>
+                </View>
+                <Text className='recommend-drawer__hint'>未识别单品需要先手动归类。</Text>
+                <View className='manual-category-list'>
+                  {manualCategoryOptions.map(category => (
+                    <Button
+                      key={category.key}
+                      className='manual-category-button'
+                      onTap={() => handleSetManualCategory(category.key)}
+                    >
+                      {category.label}
+                    </Button>
+                  ))}
+                </View>
+              </>
+            ) : (
+              <>
+                <View className='recommend-drawer__header'>
+                  <Text className='recommend-drawer__title'>推荐搭配</Text>
+                  {selectedItem && (
+                    <Text className='recommend-drawer__selected-name'>{selectedItem.label}</Text>
+                  )}
+                </View>
+                <Text className='recommend-drawer__hint'>点击推荐单品继续</Text>
+                {recommendationItems.length > 0 ? (
+                  <View className='recommend-drawer__scroll'>
+                    {recommendationItems.map(item => (
+                      <View key={item.id} onTap={() => handlePickRecommendation(item)}>
+                        {renderClothingCard(item, 'recommend')}
+                      </View>
                     ))}
                   </View>
-                </>
-              ) : (
-                <>
-                  <Text className='recommend-panel__title'>推荐搭配</Text>
-                  <Text className='recommend-panel__hint'>点击一个推荐单品继续</Text>
-                  <View className='recommend-list'>
-                    {recommendationItems.length > 0 ? (
-                      recommendationItems.map(item => (
-                        <View key={item.id} className='recommend-list__item' onTap={() => handlePickRecommendation(item)}>
-                          {renderClothingCard(item, 'recommend')}
-                        </View>
-                      ))
-                    ) : (
-                      <Text className='recommend-panel__empty'>当前分类还没有可推荐单品</Text>
-                    )}
-                  </View>
-                  <Button
-                    className='manual-pick-button'
-                    disabled={!selectedItem}
-                    onTap={() => setScreen('manualPick')}
-                  >
-                    自己选一件
-                  </Button>
-                </>
-              )}
-            </View>
+                ) : (
+                  <Text className='recommend-drawer__empty'>当前分类还没有可推荐单品</Text>
+                )}
+                <Button
+                  className='manual-pick-button'
+                  disabled={!selectedItem}
+                  onTap={() => setScreen('manualPick')}
+                >
+                  自己选一件
+                </Button>
+              </>
+            )}
           </View>
         </View>
       )}
@@ -1305,8 +1328,15 @@ export default function Index () {
           {renderCategoryTabs(manualPickCategory, setManualPickCategory)}
 
           <View className='manual-pick__selected'>
-            <Text className='manual-pick__label'>当前已选</Text>
-            <Text className='manual-pick__name'>{selectedItem.label}</Text>
+            {selectedItem.localPath ? (
+              <Image className='manual-pick__thumb' src={selectedItem.localPath} mode='aspectFill' />
+            ) : (
+              <View className='manual-pick__thumb-placeholder' />
+            )}
+            <View className='manual-pick__info'>
+              <Text className='manual-pick__label'>当前已选</Text>
+              <Text className='manual-pick__name'>{selectedItem.label}</Text>
+            </View>
           </View>
 
           <View className='grid manual-pick__grid'>
@@ -1339,7 +1369,7 @@ export default function Index () {
 
           <View className='pair-row'>
             {renderClothingCard(selectedItem, 'pair')}
-            <Text className='pair-row__plus'>+</Text>
+            <View className='pair-row__divider' />
             {renderClothingCard(selectedRecommendation, 'pair')}
           </View>
 
@@ -1359,13 +1389,35 @@ export default function Index () {
                 {recordState === 'recording' ? '正在录音...' : isAnalyzing ? '正在保存录音...' : recordState === 'done' ? (finalTranscript ? '录音完成，语音已识别' : '录音已保存') : '点击录音，说说为什么这样搭'}
               </Text>
               {recordState === 'recording' && (
-                <Text className='voice-demo-timer'>{formatRecordTime(recordSeconds)}</Text>
+                <>
+                  <View className='voice-waveform'>
+                    <View className='voice-waveform__bar' />
+                    <View className='voice-waveform__bar' />
+                    <View className='voice-waveform__bar' />
+                    <View className='voice-waveform__bar' />
+                    <View className='voice-waveform__bar' />
+                    <View className='voice-waveform__bar' />
+                    <View className='voice-waveform__bar' />
+                  </View>
+                  <Text className='voice-demo-timer'>{formatRecordTime(recordSeconds)}</Text>
+                </>
               )}
               <Button
                 className={`voice-demo-record-button ${recordState === 'recording' ? 'is-recording' : ''}`}
                 onTap={handleRecordButtonTap}
               >
-                {recordState === 'recording' ? '⏹️' : '🎤'}
+                {recordState === 'recording' ? (
+                  <View className='stop-icon' />
+                ) : (
+                  <View className='mic-icon'>
+                    <View className='mic-icon__body' />
+                    <View className='mic-icon__stand'>
+                      <View className='mic-icon__arc' />
+                      <View className='mic-icon__stem' />
+                      <View className='mic-icon__base' />
+                    </View>
+                  </View>
+                )}
               </Button>
               {recordState === 'idle' && (
                 <Text className='voice-demo-hint'>建议说场景、风格、颜色、避雷点，后续会用于个性化推荐。</Text>
