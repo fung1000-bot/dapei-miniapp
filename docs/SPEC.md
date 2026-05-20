@@ -85,9 +85,9 @@ npm run dev:weapp
 当前自动识别已接入云函数代理：
 
 - 新拍衣服先保存为 `unknown`。
-- 然后调用云函数 `recognizeClothing`，由云函数读取 API 环境变量并调用图片识别 API。
+- 然后调用云函数 `recognizeClothing`，由云函数读取腾讯云环境变量并调用腾讯云图像识别 `DetectProduct`。
 - 如果识别为 `unknown`，后续在搭配页提供手动补充分类入口。
-- 如果云函数未配置或调用失败，前端会回退到 `mockRecognizeCategory(itemId)`，保证测试流程继续可用。
+- 如果云函数未配置或调用失败，真实入库单品保持 `unknown`，避免 mock 分类误导真实识别结果。
 
 后续更换 API 服务商时，只应改云函数请求适配层，不要改变分类字段语义。
 
@@ -322,9 +322,11 @@ API key 不能放在小程序前端包里。正式部署时，需要在微信开
 TARO_APP_ID=wx68b926a2b145ced0
 TARO_CLOUD_ENV_ID=xiaochengxu-d1gnauqul33de2ac9
 
-CLOTHING_RECOGNITION_API_URL=
-CLOTHING_RECOGNITION_API_KEY=
-CLOTHING_RECOGNITION_MODEL=
+TIIA_SECRET_ID=
+TIIA_SECRET_KEY=
+TIIA_REGION=ap-guangzhou
+TIIA_MIN_CONFIDENCE=50
+TIIA_EXPLICIT_MIN_CONFIDENCE=15
 
 SPEECH_TO_TEXT_API_URL=
 SPEECH_TO_TEXT_API_KEY=
@@ -342,13 +344,15 @@ EVOLINK_MAX_TOKENS=512
 
 ### 5.1 衣服图片识别 API
 
-替换位置：
+当前实现：
 
 - `src/pages/index/index.tsx`
 - 云函数：`cloudfunctions/recognizeClothing`
 - 前端入口：`recognizeAndUpdateCategory(itemId, currentItem)`
+- API 服务：腾讯云图像识别 `DetectProduct`
+- 请求域名：`tiia.tencentcloudapi.com`
 
-建议真实 API 输入：
+云函数输入：
 
 ```ts
 {
@@ -357,15 +361,18 @@ EVOLINK_MAX_TOKENS=512
 }
 ```
 
-建议真实 API 输出：
+云函数输出：
 
 ```ts
 {
   category: 'top' | 'bottom' | 'dress' | 'set' | 'unknown'
+  categorySource: 'ai' | 'unknown'
   confidence?: number
   tags?: string[]
   color?: string
   name?: string
+  products?: unknown[]
+  requestId?: string
 }
 ```
 
@@ -374,8 +381,20 @@ EVOLINK_MAX_TOKENS=512
 - 如果 API 失败，不要阻断拍照入库。
 - 失败时保持 `category: 'unknown'`、`categorySource: 'unknown'`。
 - 如果置信度过低，也应进入 `unknown`，让用户手动分类。
-- 返回标签可以合并到 `tags`。
-- 如果云函数未配置 API URL，前端会回退到当前 mock 分类，保证测试流程继续可用。
+- 默认采用两档置信度：`TIIA_MIN_CONFIDENCE` 控制普通服饰结果，`TIIA_EXPLICIT_MIN_CONFIDENCE` 控制名称能明确命中“衬衫、裤、连衣裙、套装”等项目分类关键词的结果。
+- 返回商品名和分类路径可以合并到 `tags` 和 `name`。
+- 云函数通过 `cloud.getTempFileURL` 取得图片临时 URL，再作为 `ImageUrl` 调用腾讯云 `DetectProduct`。
+- 腾讯云返回多个 `Products` 时，优先选择服饰相关、置信度最高、且能映射到项目品类的商品。
+- 腾讯云返回鞋、包、帽子、配饰等非服装商品时归入 `unknown`。
+- 项目内部仍使用 `unknown` 作为“其他/未识别”的数据库值，UI 可按需要展示为“未识别”或“其他”。
+
+当前分类映射：
+
+- `top`：上衣、衬衫、T 恤、卫衣、毛衣、针织衫、外套、夹克、西装、风衣、大衣、背心、吊带、马甲等。
+- `bottom`：裤、牛仔裤、休闲裤、西裤、短裤、阔腿裤、打底裤、半身裙、裙裤等。
+- `dress`：连衣裙、连身裙、长裙、短裙、礼服裙、吊带裙、裙装等。
+- `set`：套装、两件套、西服套装、西装套装、运动套装、职业套装等。
+- `unknown`：置信度过低、无识别结果、非服装商品、无法映射的商品。
 
 ### 5.2 Speech to Text
 
@@ -569,7 +588,7 @@ plugins: {
 
 - 语音转文字：已由 WechatSI 插件完成。
 - 搭配关键词提取：已由 `extractKeywordsDeepSeek` 接入 EvoLink DeepSeek V4 Flash。
-- 图片分类识别：代码入口和云函数 `recognizeClothing` 已存在，仍需要接入真实图片识别 API、配置环境变量并验证。
+- 图片分类识别：已由 `recognizeClothing` 接入腾讯云图像识别 `DetectProduct`，仍需要在云函数配置腾讯云密钥并上传部署验证。
 - 个性化搭配推荐：当前仍为本地规则，不属于本阶段必须完成的 AI 接入。
 
 ## 8. 当前非目标
@@ -612,12 +631,14 @@ plugins: {
 ### 9.2 API 接入后验收
 
 1. 图片识别失败不阻断入库。
-2. 分类低置信度时进入未识别。
-3. STT 失败不丢失原始录音。
-4. 搭配关键词提取失败不阻断搭配保存。
-5. EvoLink 后台能看到 `extractKeywordsDeepSeek` 触发的 DeepSeek V4 Flash 调用记录。
-6. 推荐 API 失败时仍有本地规则或手动选择兜底。
-7. 微信开发者工具和真机均能完成主流程。
+2. 腾讯云 `DetectProduct` 成功时，云函数日志出现 `[recognizeClothing] calling Tencent DetectProduct`、`[recognizeClothing] raw response`、`[recognizeClothing] mapped category`。
+3. 上衣、下衣、连衣裙、套装图片能分别写入 `wardrobeItems.category` 的 `top`、`bottom`、`dress`、`set`。
+4. 分类低置信度、非服装或无法映射时进入 `unknown`。
+5. STT 失败不丢失原始录音。
+6. 搭配关键词提取失败不阻断搭配保存。
+7. EvoLink 后台能看到 `extractKeywordsDeepSeek` 触发的 DeepSeek V4 Flash 调用记录。
+8. 推荐 API 失败时仍有本地规则或手动选择兜底。
+9. 微信开发者工具和真机均能完成主流程。
 
 ## 10. 给后续 Claude Code 的执行提醒
 

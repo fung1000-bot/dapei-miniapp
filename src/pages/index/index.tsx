@@ -850,8 +850,11 @@ export default function Index () {
           })
           return
         }
+        console.warn('[cloud] recognize clothing returned non-ok, keep unknown', recognition)
+        return
       } catch (error) {
-        console.error('[cloud] recognize clothing failed, fallback to mock', error)
+        console.error('[cloud] recognize clothing failed, keep unknown', error)
+        return
       }
     }
 
