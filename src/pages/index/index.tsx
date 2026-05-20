@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button, Camera, Image, Input, Text, View } from '@tarojs/components'
 import Taro from '@tarojs/taro'
+import { getCurrentOpenId } from '../../services/auth'
 import './index.scss'
 
 declare const requirePlugin: (pluginId: string) => any
@@ -121,6 +122,10 @@ const PROFILE_COLLECTION = 'userStyleProfiles'
 const PROFILE_ID = 'default'
 const CURRENT_SCHEMA_VERSION = 1
 
+function getUserProfileId (ownerId: string) {
+  return `${PROFILE_ID}_${ownerId}`
+}
+
 const clothingCategories: { key: ClothingCategory, label: string }[] = [
   { key: 'top', label: '上衣' },
   { key: 'bottom', label: '下衣' },
@@ -157,9 +162,9 @@ function getCloudDatabase () {
   return wx.cloud.database()
 }
 
-async function readWardrobeItems () {
+async function readWardrobeItems (ownerId: string) {
   const database = getCloudDatabase()
-  const result = await database.collection(WARDROBE_COLLECTION).orderBy('createdAt', 'desc').get()
+  const result = await database.collection(WARDROBE_COLLECTION).where({ ownerId }).orderBy('createdAt', 'desc').get()
   const wardrobeItems = Array.isArray(result.data) ? result.data : []
 
   return wardrobeItems
@@ -193,18 +198,18 @@ async function addWardrobeItem (item: WardrobeItem) {
   })
 }
 
-async function updateWardrobeItem (itemId: string, data: Partial<WardrobeItem>) {
+async function updateWardrobeItem (itemId: string, ownerId: string, data: Partial<WardrobeItem>) {
   const database = getCloudDatabase()
 
-  await database.collection(WARDROBE_COLLECTION).where({ id: itemId }).update({
+  await database.collection(WARDROBE_COLLECTION).where({ id: itemId, ownerId }).update({
     data
   })
 }
 
-async function deleteWardrobeItem (itemId: string) {
+async function deleteWardrobeItem (itemId: string, ownerId: string) {
   const database = getCloudDatabase()
 
-  await database.collection(WARDROBE_COLLECTION).where({ id: itemId }).remove()
+  await database.collection(WARDROBE_COLLECTION).where({ id: itemId, ownerId }).remove()
 }
 
 function mapWardrobeItemToClothingItem (item: WardrobeItem, index: number): ClothingItem {
@@ -228,35 +233,6 @@ function getRecommendationCategories (category: ClothingCategory) {
   return []
 }
 
-async function readOutfitRecords () {
-  const database = getCloudDatabase()
-  const result = await database.collection(OUTFIT_COLLECTION).orderBy('createdAt', 'desc').get()
-  const outfitRecords = Array.isArray(result.data) ? result.data : []
-
-  return outfitRecords
-    .filter(item => Boolean(item.id && Array.isArray(item.itemIds)))
-    .map((item): OutfitRecord => ({
-      id: String(item.id),
-      ownerId: String(item.ownerId || ''),
-      shopId: item.shopId ? String(item.shopId) : null,
-      schemaVersion: typeof item.schemaVersion === 'number' ? item.schemaVersion : CURRENT_SCHEMA_VERSION,
-      itemIds: Array.isArray(item.itemIds) ? item.itemIds.map(String) : [],
-      createdAt: item.createdAt || new Date().toISOString(),
-      noteText: item.noteText || '',
-      voiceNote: item.voiceNote || null,
-      transcript: item.transcript || {
-        text: '',
-        source: 'pending',
-        updatedAt: ''
-      },
-      extractedPreferences: item.extractedPreferences || createEmptyPreferences(),
-      aiStatus: item.aiStatus || {
-        stt: 'pending',
-        preferenceExtract: 'pending'
-      }
-    }))
-}
-
 async function addOutfitRecord (item: OutfitRecord) {
   const database = getCloudDatabase()
 
@@ -265,14 +241,15 @@ async function addOutfitRecord (item: OutfitRecord) {
   })
 }
 
-async function readUserStyleProfile () {
+async function readUserStyleProfile (ownerId: string) {
   const database = getCloudDatabase()
-  const result = await database.collection(PROFILE_COLLECTION).where({ id: PROFILE_ID }).limit(1).get()
+  const profileId = getUserProfileId(ownerId)
+  const result = await database.collection(PROFILE_COLLECTION).where({ id: profileId, ownerId }).limit(1).get()
   const profile = Array.isArray(result.data) ? result.data[0] : null
 
   return {
-    id: profile?.id || PROFILE_ID,
-    ownerId: profile?.ownerId || '',
+    id: profile?.id || profileId,
+    ownerId: profile?.ownerId || ownerId,
     shopId: profile?.shopId || null,
     schemaVersion: typeof profile?.schemaVersion === 'number' ? profile.schemaVersion : CURRENT_SCHEMA_VERSION,
     updatedAt: profile?.updatedAt || '',
@@ -284,14 +261,17 @@ async function readUserStyleProfile () {
   }
 }
 
-async function writeUserStyleProfile (profile: UserStyleProfile) {
+async function writeUserStyleProfile (ownerId: string, profile: UserStyleProfile) {
   const database = getCloudDatabase()
-  const result = await database.collection(PROFILE_COLLECTION).where({ id: PROFILE_ID }).limit(1).get()
+  const profileId = getUserProfileId(ownerId)
+  const result = await database.collection(PROFILE_COLLECTION).where({ id: profileId, ownerId }).limit(1).get()
 
   if (Array.isArray(result.data) && result.data.length > 0) {
-    await database.collection(PROFILE_COLLECTION).where({ id: PROFILE_ID }).update({
+    await database.collection(PROFILE_COLLECTION).where({ id: profileId, ownerId }).update({
       data: {
         ...profile,
+        id: profileId,
+        ownerId,
         schemaVersion: CURRENT_SCHEMA_VERSION
       }
     })
@@ -300,11 +280,11 @@ async function writeUserStyleProfile (profile: UserStyleProfile) {
 
   await database.collection(PROFILE_COLLECTION).add({
     data: {
-      id: PROFILE_ID,
-      ownerId: '',
-      shopId: null,
-      schemaVersion: CURRENT_SCHEMA_VERSION,
-      ...profile
+      ...profile,
+      id: profileId,
+      ownerId,
+      shopId: profile.shopId,
+      schemaVersion: CURRENT_SCHEMA_VERSION
     }
   })
 }
@@ -350,6 +330,7 @@ export default function Index () {
   const [finalTranscript, setFinalTranscript] = useState('')
   const [extractedPreferences, setExtractedPreferences] = useState<ExtractedPreferences>(createEmptyPreferences)
   const [flashMode, setFlashMode] = useState<FlashMode>('auto')
+  const [currentOpenId, setCurrentOpenId] = useState('')
   const [wardrobeItems, setWardrobeItems] = useState<WardrobeItem[]>([])
   const [capturedItems, setCapturedItems] = useState<WardrobeItem[]>([])
   const [isCapturePreviewOpen, setIsCapturePreviewOpen] = useState(false)
@@ -374,7 +355,19 @@ export default function Index () {
   const previewItem = capturedItems[capturePreviewIndex]
 
   useEffect(() => {
-    refreshWardrobeItems()
+    let isMounted = true
+
+    getCurrentOpenId()
+      .then(openId => {
+        if (!isMounted) return
+
+        setCurrentOpenId(openId)
+        refreshWardrobeItems(openId)
+      })
+      .catch(error => {
+        console.error('[auth] miniapp login failed', error)
+        showDemoToast('登录失败，请重试')
+      })
 
     let recorderManager: WechatSIManager | null = null
     let useFallback = false
@@ -415,6 +408,7 @@ export default function Index () {
     }
 
     return () => {
+      isMounted = false
       clearRecordTimers()
       if (isRecorderActiveRef.current) {
         shouldDiscardRecorderStopRef.current = true
@@ -423,9 +417,21 @@ export default function Index () {
     }
   }, [])
 
-  async function refreshWardrobeItems () {
+  async function ensureOpenId () {
+    const openId = currentOpenId || await getCurrentOpenId()
+
+    if (!currentOpenId && openId) {
+      setCurrentOpenId(openId)
+    }
+
+    return openId
+  }
+
+  async function refreshWardrobeItems (ownerId = currentOpenId) {
+    if (!ownerId) return
+
     try {
-      setWardrobeItems(await readWardrobeItems())
+      setWardrobeItems(await readWardrobeItems(ownerId))
     } catch (error) {
       console.error('[cloud] load wardrobe items failed', error)
       showDemoToast('云端衣橱加载失败')
@@ -789,11 +795,12 @@ export default function Index () {
   }
 
   async function savePhotoToWardrobe (tempImagePath: string, albumSaved: boolean) {
+    const ownerId = await ensureOpenId()
     const itemId = `item_${Date.now()}`
     const cloudFileId = await uploadCloudFile(`wardrobe/${itemId}.jpg`, tempImagePath)
     const wardrobeItem: WardrobeItem = {
       id: itemId,
-      ownerId: '',
+      ownerId,
       shopId: null,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       cloudFileId,
@@ -893,7 +900,8 @@ export default function Index () {
     category: ClothingCategory,
     categorySource: CategorySource
   ) {
-    const currentItems = await readWardrobeItems()
+    const ownerId = await ensureOpenId()
+    const currentItems = await readWardrobeItems(ownerId)
     const nextItems = currentItems.map(item => {
       if (item.id !== itemId) return item
 
@@ -910,7 +918,7 @@ export default function Index () {
     const changedItem = nextItems.find(item => item.id === itemId)
 
     if (changedItem) {
-      await updateWardrobeItem(itemId, {
+      await updateWardrobeItem(itemId, ownerId, {
         category: changedItem.category,
         categorySource: changedItem.categorySource,
         tags: changedItem.tags
@@ -944,10 +952,11 @@ export default function Index () {
   async function handleDeletePreviewItem () {
     if (!previewItem) return
 
+    const ownerId = previewItem.ownerId || await ensureOpenId()
     const nextItems = capturedItems.filter(item => item.id !== previewItem.id)
     const nextWardrobeItems = wardrobeItems.filter(item => item.id !== previewItem.id)
 
-    await deleteWardrobeItem(previewItem.id).catch(() => undefined)
+    await deleteWardrobeItem(previewItem.id, ownerId).catch(() => undefined)
     if (previewItem.cloudFileId) {
       await wx.cloud?.deleteFile({ fileList: [previewItem.cloudFileId] }).catch(() => undefined)
     }
@@ -981,10 +990,11 @@ export default function Index () {
   async function handleSaveOutfit () {
     if (!selectedItem || !selectedRecommendation) return
 
+    const ownerId = await ensureOpenId()
     const now = new Date().toISOString()
     const outfitRecord: OutfitRecord = {
       id: `outfit_${Date.now()}`,
-      ownerId: '',
+      ownerId,
       shopId: null,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       itemIds: [selectedItem.id, selectedRecommendation.id],
@@ -1028,7 +1038,7 @@ export default function Index () {
   }
 
   async function updateWardrobeItemsForOutfit (outfitRecord: OutfitRecord) {
-    const nextItems = (await readWardrobeItems()).map(item => {
+    const nextItems = (await readWardrobeItems(outfitRecord.ownerId)).map(item => {
       if (!outfitRecord.itemIds.includes(item.id)) return item
 
       return {
@@ -1040,7 +1050,7 @@ export default function Index () {
     })
     const changedItems = nextItems.filter(item => outfitRecord.itemIds.includes(item.id))
 
-    await Promise.all(changedItems.map(item => updateWardrobeItem(item.id, {
+    await Promise.all(changedItems.map(item => updateWardrobeItem(item.id, outfitRecord.ownerId, {
       matchCount: item.matchCount,
       outfits: item.outfits,
       styleTags: item.styleTags
@@ -1059,11 +1069,11 @@ export default function Index () {
   }
 
   async function updateUserStyleProfile (outfitRecord: OutfitRecord) {
-    const profile = await readUserStyleProfile()
+    const profile = await readUserStyleProfile(outfitRecord.ownerId)
     const preferences = outfitRecord.extractedPreferences
     const nextProfile: UserStyleProfile = {
-      id: PROFILE_ID,
-      ownerId: profile.ownerId,
+      id: getUserProfileId(outfitRecord.ownerId),
+      ownerId: outfitRecord.ownerId,
       shopId: profile.shopId,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
@@ -1074,7 +1084,7 @@ export default function Index () {
       lastOutfitIds: [outfitRecord.id, ...profile.lastOutfitIds.filter(id => id !== outfitRecord.id)].slice(0, 20)
     }
 
-    await writeUserStyleProfile(nextProfile)
+    await writeUserStyleProfile(outfitRecord.ownerId, nextProfile)
   }
 
   function handleBackToMatch () {

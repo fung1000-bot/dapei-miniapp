@@ -1,0 +1,1 @@
+const cloud=require("wx-server-sdk");cloud.init({env:cloud.DYNAMIC_CURRENT_ENV}),exports.main=async()=>{try{const e=cloud.getWXContext(),o=e.OPENID||"";return o?{ok:!0,openId:o,appId:e.APPID||"",unionId:e.UNIONID||""}:{ok:!1,code:"OPENID_EMPTY",message:"Failed to get OPENID."}}catch(e){return{ok:!1,code:"LOGIN_FAILED",message:e.message||"Login failed."}}};
