@@ -4,7 +4,7 @@ page {
 
 .execution-page {
   min-height: 100vh;
-  padding: 30px 24px 44px;
+  padding: 30px 24px 140px;
   box-sizing: border-box;
   color: #1a1612;
   background:
@@ -196,5 +196,35 @@ page {
 }
 
 .execution-state__button::after {
+  border: 0;
+}
+
+.share-bar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 10;
+  display: flex;
+  padding: 16px 24px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  background: rgba(244, 240, 232, 0.92);
+  backdrop-filter: blur(12px);
+  box-sizing: border-box;
+}
+
+.share-bar__button {
+  flex: 1;
+  height: 80px;
+  border: 0;
+  border-radius: 999px;
+  color: #f8f3eb;
+  background: #2a5548;
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 80px;
+}
+
+.share-bar__button::after {
   border: 0;
 }

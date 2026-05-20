@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Image, Text, View } from '@tarojs/components'
-import Taro from '@tarojs/taro'
+import Taro, { useShareAppMessage } from '@tarojs/taro'
 import './index.scss'
 
 type ClothingCategory = 'top' | 'bottom' | 'dress' | 'set' | 'unknown'
@@ -143,6 +143,13 @@ export default function ExecutionPage () {
   const [wardrobeItems, setWardrobeItems] = useState<WardrobeItem[]>([])
   const [outfitRecords, setOutfitRecords] = useState<OutfitRecord[]>([])
 
+  const batchId = String(Taro.getCurrentInstance().router?.params?.batchId || '')
+
+  useShareAppMessage(() => ({
+    title: batch?.name || '搭配执行结果',
+    path: `/pages/execution/index?batchId=${batchId}`
+  }))
+
   useEffect(() => {
     loadExecutionPage()
   }, [])
@@ -274,6 +281,9 @@ export default function ExecutionPage () {
 
   return (
     <View className='execution-page'>
+      <View className='share-bar'>
+        <Button className='share-bar__button' openType='share'>转发给员工</Button>
+      </View>
       <View className='execution-hero'>
         <Text className='execution-kicker'>员工执行页</Text>
         <Text className='execution-title'>{batch?.name || '搭配结果'}</Text>

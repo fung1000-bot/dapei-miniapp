@@ -113,6 +113,13 @@ page {
   color: #f8f3eb;
 }
 
+.batch-card__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+}
+
 .batch-card__button {
   width: 180px;
   height: 62px;
@@ -124,6 +131,12 @@ page {
   font-size: 23px;
   font-weight: 700;
   line-height: 62px;
+}
+
+.batch-card__button--secondary {
+  color: #685b51;
+  background: transparent;
+  border: 2px solid #c5b8ac;
 }
 
 /* ── Action cards ── */

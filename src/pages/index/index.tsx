@@ -1355,10 +1355,13 @@ export default function Index () {
             </View>
             {currentBatch?.status === 'active' ? (
               <Button className='batch-card__button' onTap={handleShareExecutionPage}>分享执行页</Button>
+            ) : currentBatch ? (
+              <View className='batch-card__actions'>
+                <Button className='batch-card__button batch-card__button--secondary' onTap={() => Taro.navigateTo({ url: `/pages/execution/index?batchId=${currentBatch.id}` })}>查看执行页</Button>
+                <Button className='batch-card__button' onTap={handleStartBatch}>开始下一批</Button>
+              </View>
             ) : (
-              <Button className='batch-card__button' onTap={handleStartBatch}>
-                {currentBatch ? '开始下一批' : '开始本次进货'}
-              </Button>
+              <Button className='batch-card__button' onTap={handleStartBatch}>开始本次进货</Button>
             )}
           </View>
 
