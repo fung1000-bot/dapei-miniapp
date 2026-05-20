@@ -29,6 +29,7 @@ type RecordState = 'idle' | 'recording' | 'done'
 type FlashMode = 'auto' | 'on' | 'off'
 type TranscriptSource = 'pending' | 'stt' | 'manual' | 'mock'
 type AiTaskStatus = 'pending' | 'done' | 'failed' | 'skipped'
+type BatchStatus = 'active' | 'closed'
 
 type ClothingItem = {
   id: string
@@ -43,6 +44,8 @@ type ClothingItem = {
 type WardrobeItem = {
   id: string
   ownerId: string
+  batchId: string
+  batchName: string
   shopId: string | null
   schemaVersion: number
   cloudFileId: string
@@ -84,6 +87,8 @@ type ExtractedPreferences = {
 type OutfitRecord = {
   id: string
   ownerId: string
+  batchId: string
+  batchName: string
   shopId: string | null
   schemaVersion: number
   itemIds: string[]
@@ -116,6 +121,16 @@ type UserStyleProfile = {
   lastOutfitIds: string[]
 }
 
+type StockBatch = {
+  id: string
+  ownerId: string
+  name: string
+  status: BatchStatus
+  createdAt: string
+  closedAt: string | null
+}
+
+const BATCH_COLLECTION = 'stockBatches'
 const WARDROBE_COLLECTION = 'wardrobeItems'
 const OUTFIT_COLLECTION = 'outfitRecords'
 const PROFILE_COLLECTION = 'userStyleProfiles'
@@ -124,6 +139,12 @@ const CURRENT_SCHEMA_VERSION = 1
 
 function getUserProfileId (ownerId: string) {
   return `${PROFILE_ID}_${ownerId}`
+}
+
+function createDefaultBatchName () {
+  const date = new Date()
+
+  return `${date.getMonth() + 1}月${date.getDate()}日进货批次`
 }
 
 const clothingCategories: { key: ClothingCategory, label: string }[] = [
@@ -172,6 +193,8 @@ async function readWardrobeItems (ownerId: string) {
     .map((item): WardrobeItem => ({
       id: String(item.id),
       ownerId: String(item.ownerId || ''),
+      batchId: String(item.batchId || ''),
+      batchName: String(item.batchName || ''),
       shopId: item.shopId ? String(item.shopId) : null,
       schemaVersion: typeof item.schemaVersion === 'number' ? item.schemaVersion : CURRENT_SCHEMA_VERSION,
       cloudFileId: String(item.cloudFileId || ''),
@@ -188,6 +211,78 @@ async function readWardrobeItems (ownerId: string) {
       matchCount: typeof item.matchCount === 'number' ? item.matchCount : 0,
       outfits: Array.isArray(item.outfits) ? item.outfits : []
     }))
+}
+
+function normalizeStockBatch (item): StockBatch {
+  return {
+    id: String(item.id || ''),
+    ownerId: String(item.ownerId || ''),
+    name: String(item.name || ''),
+    status: item.status === 'closed' ? 'closed' : 'active',
+    createdAt: String(item.createdAt || ''),
+    closedAt: item.closedAt ? String(item.closedAt) : null
+  }
+}
+
+async function readCurrentStockBatch (ownerId: string) {
+  const database = getCloudDatabase()
+  const activeResult = await database.collection(BATCH_COLLECTION)
+    .where({ ownerId, status: 'active' })
+    .orderBy('createdAt', 'desc')
+    .limit(1)
+    .get()
+  const activeBatch = Array.isArray(activeResult.data) ? activeResult.data[0] : null
+
+  if (activeBatch) return normalizeStockBatch(activeBatch)
+
+  const latestResult = await database.collection(BATCH_COLLECTION)
+    .where({ ownerId })
+    .orderBy('createdAt', 'desc')
+    .limit(1)
+    .get()
+  const latestBatch = Array.isArray(latestResult.data) ? latestResult.data[0] : null
+
+  return latestBatch ? normalizeStockBatch(latestBatch) : null
+}
+
+async function createStockBatch (ownerId: string) {
+  const database = getCloudDatabase()
+  const now = new Date().toISOString()
+  const batch: StockBatch = {
+    id: `batch_${Date.now()}`,
+    ownerId,
+    name: createDefaultBatchName(),
+    status: 'active',
+    createdAt: now,
+    closedAt: null
+  }
+
+  await database.collection(BATCH_COLLECTION).add({
+    data: batch
+  })
+
+  return batch
+}
+
+async function closeStockBatch (batch: StockBatch) {
+  const database = getCloudDatabase()
+  const closedAt = new Date().toISOString()
+
+  await database.collection(BATCH_COLLECTION).where({
+    id: batch.id,
+    ownerId: batch.ownerId
+  }).update({
+    data: {
+      status: 'closed',
+      closedAt
+    }
+  })
+
+  return {
+    ...batch,
+    status: 'closed' as const,
+    closedAt
+  }
 }
 
 async function addWardrobeItem (item: WardrobeItem) {
@@ -331,6 +426,7 @@ export default function Index () {
   const [extractedPreferences, setExtractedPreferences] = useState<ExtractedPreferences>(createEmptyPreferences)
   const [flashMode, setFlashMode] = useState<FlashMode>('auto')
   const [currentOpenId, setCurrentOpenId] = useState('')
+  const [currentBatch, setCurrentBatch] = useState<StockBatch | null>(null)
   const [wardrobeItems, setWardrobeItems] = useState<WardrobeItem[]>([])
   const [capturedItems, setCapturedItems] = useState<WardrobeItem[]>([])
   const [isCapturePreviewOpen, setIsCapturePreviewOpen] = useState(false)
@@ -362,6 +458,7 @@ export default function Index () {
         if (!isMounted) return
 
         setCurrentOpenId(openId)
+        refreshCurrentBatch(openId)
         refreshWardrobeItems(openId)
       })
       .catch(error => {
@@ -435,6 +532,89 @@ export default function Index () {
     } catch (error) {
       console.error('[cloud] load wardrobe items failed', error)
       showDemoToast('云端衣橱加载失败')
+    }
+  }
+
+  async function refreshCurrentBatch (ownerId = currentOpenId) {
+    if (!ownerId) return null
+
+    try {
+      const batch = await readCurrentStockBatch(ownerId)
+
+      setCurrentBatch(batch)
+
+      return batch
+    } catch (error) {
+      console.error('[batch] load current batch failed', error)
+      showDemoToast('进货批次加载失败')
+      return null
+    }
+  }
+
+  async function ensureActiveBatch () {
+    const ownerId = await ensureOpenId()
+    const latestBatch = currentBatch?.status === 'active' ? currentBatch : await readCurrentStockBatch(ownerId)
+
+    if (latestBatch?.status === 'active') {
+      if (currentBatch?.id !== latestBatch.id) setCurrentBatch(latestBatch)
+      return latestBatch
+    }
+
+    throw new Error('NO_ACTIVE_BATCH')
+  }
+
+  async function handleStartBatch () {
+    try {
+      const ownerId = await ensureOpenId()
+      const batch = await createStockBatch(ownerId)
+
+      setCurrentBatch(batch)
+      showDemoToast('已开始本次进货')
+    } catch (error) {
+      console.error('[batch] create batch failed', error)
+      showDemoToast('创建进货批次失败')
+    }
+  }
+
+  function requireActiveBatch (next: () => void) {
+    if (currentBatch?.status === 'active') {
+      next()
+      return
+    }
+
+    showDemoToast('请先开始本次进货')
+  }
+
+  async function handleShareExecutionPage () {
+    const batch = currentBatch || await refreshCurrentBatch()
+
+    if (!batch) {
+      showDemoToast('请先开始本次进货')
+      return
+    }
+
+    if (batch.status === 'closed') {
+      Taro.navigateTo({ url: `/pages/execution/index?batchId=${batch.id}` })
+      return
+    }
+
+    const result = await Taro.showModal({
+      title: '结束并生成执行页？',
+      content: '结束后，本批次将停止新增衣服和搭配。员工将看到本批次最终的已搭配 / 未搭配结果。',
+      cancelText: '再检查一下',
+      confirmText: '结束并生成'
+    })
+
+    if (!result.confirm) return
+
+    try {
+      const closedBatch = await closeStockBatch(batch)
+
+      setCurrentBatch(closedBatch)
+      Taro.navigateTo({ url: `/pages/execution/index?batchId=${closedBatch.id}` })
+    } catch (error) {
+      console.error('[batch] close batch failed', error)
+      showDemoToast('生成执行页失败')
     }
   }
 
@@ -796,11 +976,14 @@ export default function Index () {
 
   async function savePhotoToWardrobe (tempImagePath: string, albumSaved: boolean) {
     const ownerId = await ensureOpenId()
+    const batch = await ensureActiveBatch()
     const itemId = `item_${Date.now()}`
     const cloudFileId = await uploadCloudFile(`wardrobe/${itemId}.jpg`, tempImagePath)
     const wardrobeItem: WardrobeItem = {
       id: itemId,
       ownerId,
+      batchId: batch.id,
+      batchName: batch.name,
       shopId: null,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       cloudFileId,
@@ -991,10 +1174,13 @@ export default function Index () {
     if (!selectedItem || !selectedRecommendation) return
 
     const ownerId = await ensureOpenId()
+    const batch = await ensureActiveBatch()
     const now = new Date().toISOString()
     const outfitRecord: OutfitRecord = {
       id: `outfit_${Date.now()}`,
       ownerId,
+      batchId: batch.id,
+      batchName: batch.name,
       shopId: null,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       itemIds: [selectedItem.id, selectedRecommendation.id],
