@@ -60,6 +60,72 @@ page {
   gap: 18px;
 }
 
+.batch-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 24px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 12px 30px rgba(36, 31, 26, 0.06);
+}
+
+.batch-card--active {
+  background: #2a5548;
+}
+
+.batch-card--closed {
+  background: #ffffff;
+}
+
+.batch-card__content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.batch-card__label,
+.batch-card__name {
+  display: block;
+}
+
+.batch-card__label {
+  color: #8a7d70;
+  font-size: 21px;
+  font-weight: 600;
+}
+
+.batch-card--active .batch-card__label {
+  color: rgba(248, 243, 235, 0.72);
+}
+
+.batch-card__name {
+  color: #1a1612;
+  font-size: 27px;
+  font-weight: 800;
+  line-height: 1.28;
+}
+
+.batch-card--active .batch-card__name {
+  color: #f8f3eb;
+}
+
+.batch-card__button {
+  width: 180px;
+  height: 62px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  color: #2a5548;
+  background: #d6e8e3;
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 62px;
+}
+
 /* ── Action cards ── */
 
 .action-card {
@@ -77,6 +143,7 @@ page {
 }
 
 .action-card::after,
+.batch-card__button::after,
 .primary-button::after,
 .camera-control::after,
 .flash-button::after,

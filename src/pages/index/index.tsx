@@ -224,25 +224,26 @@ function normalizeStockBatch (item): StockBatch {
   }
 }
 
+function sortByCreatedAtDesc<T extends { createdAt: string }> (items: T[]) {
+  return [...items].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+}
+
 async function readCurrentStockBatch (ownerId: string) {
   const database = getCloudDatabase()
   const activeResult = await database.collection(BATCH_COLLECTION)
     .where({ ownerId, status: 'active' })
-    .orderBy('createdAt', 'desc')
-    .limit(1)
     .get()
-  const activeBatch = Array.isArray(activeResult.data) ? activeResult.data[0] : null
+  const activeBatches = Array.isArray(activeResult.data) ? activeResult.data.map(normalizeStockBatch) : []
+  const activeBatch = sortByCreatedAtDesc(activeBatches)[0]
 
-  if (activeBatch) return normalizeStockBatch(activeBatch)
+  if (activeBatch) return activeBatch
 
   const latestResult = await database.collection(BATCH_COLLECTION)
     .where({ ownerId })
-    .orderBy('createdAt', 'desc')
-    .limit(1)
     .get()
-  const latestBatch = Array.isArray(latestResult.data) ? latestResult.data[0] : null
+  const latestBatches = Array.isArray(latestResult.data) ? latestResult.data.map(normalizeStockBatch) : []
 
-  return latestBatch ? normalizeStockBatch(latestBatch) : null
+  return sortByCreatedAtDesc(latestBatches)[0] || null
 }
 
 async function createStockBatch (ownerId: string) {
@@ -586,35 +587,37 @@ export default function Index () {
   }
 
   async function handleShareExecutionPage () {
-    const batch = currentBatch || await refreshCurrentBatch()
-
-    if (!batch) {
-      showDemoToast('请先开始本次进货')
-      return
-    }
-
-    if (batch.status === 'closed') {
-      Taro.navigateTo({ url: `/pages/execution/index?batchId=${batch.id}` })
-      return
-    }
-
-    const result = await Taro.showModal({
-      title: '结束并生成执行页？',
-      content: '结束后，本批次将停止新增衣服和搭配。员工将看到本批次最终的已搭配 / 未搭配结果。',
-      cancelText: '再检查一下',
-      confirmText: '结束并生成'
-    })
-
-    if (!result.confirm) return
-
+    console.log('[batch] share page tapped', currentBatch)
     try {
+      const batch = currentBatch || await refreshCurrentBatch()
+
+      if (!batch) {
+        showDemoToast('请先开始本次进货')
+        return
+      }
+
+      if (batch.status === 'closed') {
+        Taro.navigateTo({ url: `/pages/execution/index?batchId=${batch.id}` })
+        return
+      }
+
+      const result = await Taro.showModal({
+        title: '结束并生成执行页？',
+        content: '结束后，本批次将停止新增衣服和搭配。员工将看到本批次最终的已搭配 / 未搭配结果。',
+        showCancel: true,
+        cancelText: '再看看',
+        confirmText: '结束生成'
+      })
+
+      if (!result.confirm) return
+
       const closedBatch = await closeStockBatch(batch)
 
       setCurrentBatch(closedBatch)
       Taro.navigateTo({ url: `/pages/execution/index?batchId=${closedBatch.id}` })
     } catch (error) {
-      console.error('[batch] close batch failed', error)
-      showDemoToast('生成执行页失败')
+      console.error('[batch] share execution page failed', error)
+      showDemoToast('操作失败，请重试')
     }
   }
 
@@ -630,6 +633,15 @@ export default function Index () {
     setIsCapturePreviewOpen(false)
     setCapturePreviewIndex(0)
     setIsTakingPhoto(false)
+    resetVoiceDemo()
+  }
+
+  function resetToMatch () {
+    setScreen('match')
+    setSelectedItem(null)
+    setSelectedRecommendation(null)
+    setNote('')
+    noteRef.current = ''
     resetVoiceDemo()
   }
 
@@ -1206,7 +1218,7 @@ export default function Index () {
       await updateWardrobeItemsForOutfit(enrichedOutfitRecord)
       await updateUserStyleProfile(enrichedOutfitRecord)
       showDemoToast('搭配已保存')
-      resetToHome()
+      resetToMatch()
     } catch (error) {
       showDemoToast('搭配保存失败，请重试')
     }
@@ -1332,8 +1344,26 @@ export default function Index () {
             <Text className='subtext'>衣橱 {catalogItems.length} 件</Text>
           </View>
 
+          <View className={`batch-card batch-card--${currentBatch?.status || 'empty'}`}>
+            <View className='batch-card__content'>
+              <Text className='batch-card__label'>
+                {currentBatch ? (currentBatch.status === 'active' ? '当前进货批次' : '最近完成批次') : '暂无进行中的进货批次'}
+              </Text>
+              <Text className='batch-card__name'>
+                {currentBatch?.name || '开始本次进货后，拍照和搭配会自动归入同一批次'}
+              </Text>
+            </View>
+            {currentBatch?.status === 'active' ? (
+              <Button className='batch-card__button' onTap={handleShareExecutionPage}>分享执行页</Button>
+            ) : (
+              <Button className='batch-card__button' onTap={handleStartBatch}>
+                {currentBatch ? '开始下一批' : '开始本次进货'}
+              </Button>
+            )}
+          </View>
+
           <View className='home__actions'>
-            <Button className='action-card action-card--camera' onTap={() => setScreen('camera')}>
+            <Button className='action-card action-card--camera' onTap={() => requireActiveBatch(() => setScreen('camera'))}>
               <View className='icon-cam'>
                 <View className='icon-cam__bump' />
                 <View className='icon-cam__body'>
@@ -1344,7 +1374,7 @@ export default function Index () {
               <Text className='action-card__hint'>拍照后 AI 自动识别归类</Text>
             </Button>
 
-            <Button className='action-card action-card--match' onTap={() => setScreen('match')}>
+            <Button className='action-card action-card--match' onTap={() => requireActiveBatch(() => setScreen('match'))}>
               <View className='action-card__content'>
                 <Text className='action-card__title'>搭衣服</Text>
                 <Text className='action-card__hint'>选单品查看推荐搭配</Text>
@@ -1660,8 +1690,8 @@ export default function Index () {
             <View className='confirm-action-bar'>
               <Button className='confirm-action-button' onTap={handleBackToMatch}>取消</Button>
               <Button
-                className={`confirm-action-button is-next ${recordState === 'done' && !isAnalyzing ? 'is-active' : ''}`}
-                disabled={recordState !== 'done' || isAnalyzing}
+                className={`confirm-action-button is-next ${!isAnalyzing ? 'is-active' : ''}`}
+                disabled={isAnalyzing}
                 onTap={handleSaveOutfit}
               >
                 保存搭配
