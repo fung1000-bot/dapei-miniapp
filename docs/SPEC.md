@@ -171,6 +171,58 @@ npm run dev:weapp
 - 同时更新关联衣服的 `matchCount`、`outfits`、`styleTags`。
 - 同时更新 `userStyleProfile` 审美画像。
 
+### 3.7 进货批次管理
+
+每次去档口进货前，老板先在首页"开始本次进货"，系统在云数据库 `stockBatches` 创建一条 `status: active` 的批次记录，并生成默认名称（如"5月20日进货批次"）。
+
+批次处于激活状态（`active`）时：
+
+- 拍照入库的每件衣服会写入 `batchId` 和 `batchName`。
+- 保存的每条搭配记录同样写入 `batchId` 和 `batchName`。
+- 首页批次卡片展示当前批次名称和状态，并显示"分享执行页"按钮。
+
+**无 active 批次时的拦截逻辑**：点击"拍新衣服"或"搭衣服"会弹 toast 提示"请先开始本次进货"，阻止产生没有批次归属的数据。
+
+**批次关闭流程**：
+
+1. 老板点击"分享执行页"。
+2. 弹窗确认（`showModal`），询问是否结束本批次。
+3. 确认后将批次 `status` 更新为 `closed`，写入 `closedAt` 时间戳。
+4. 自动跳转到员工执行页（`pages/execution/index?batchId=xxx`）。
+
+批次关闭后，首页批次卡片变为"查看执行页"和"开始下一批"两个按钮，方便老板再次进入执行页转发，或直接开启下一批。
+
+### 3.8 员工执行页与转发分享
+
+路由：`pages/execution/index`，通过 URL 参数 `batchId` 加载指定批次数据。
+
+**数据加载顺序**：
+
+1. 优先调用云函数 `getExecutionBatch`（传入 `batchId`），由云函数以管理员权限聚合数据，规避员工端的数据库权限问题。
+2. 云函数调用失败时回退到前端直接查询云数据库（需要员工有对应集合的读权限）。
+
+**页面展示内容**（只读）：
+
+- 批次名称、状态（进行中 / 已结束）和时间。
+- 摘要数字：已搭配套数、未搭配件数。
+- 已搭配列表：每套搭配显示两件衣服的图片、名称、分类和识别来源。
+- 未搭配列表：批次内尚未进入任何搭配的单品，同样展示图片和分类。
+
+**转发分享（方案 A）**：
+
+执行页底部固定"转发给员工"按钮，使用微信小程序 `<Button openType='share'>`。同时在页面级注册 `useShareAppMessage`，返回：
+
+```ts
+{
+  title: batch.name,           // 批次名称，如"5月20日进货批次"
+  path: `/pages/execution/index?batchId=${batchId}`
+}
+```
+
+员工在微信中收到转发卡片后，点击即直接进入对应批次的执行页。
+
+**DEMO 阶段限制**：转发卡片要求接收方也是小程序的**体验成员**，正式发布后对所有人开放。
+
 ## 4. 本地数据结构
 
 ### 4.1 wardrobeItems
@@ -304,6 +356,38 @@ type UserStyleProfile = {
 - `colorTags`：颜色偏好，例如同色系、低饱和、黑白灰。
 - `avoidTags`：避雷点，例如太花、显胖、压身高。
 - `lastOutfitIds`：最近保存的搭配 ID，当前最多保留 20 条。
+
+### 4.4 stockBatches
+
+云数据库集合：`stockBatches`
+
+每条进货批次记录：
+
+```ts
+type StockBatch = {
+  id: string
+  ownerId: string
+  name: string
+  status: 'active' | 'closed'
+  createdAt: string
+  closedAt: string | null
+}
+```
+
+字段说明：
+
+- `id`：本地唯一 ID，格式为 `batch_时间戳`。
+- `ownerId`：创建者标识，与 `wardrobeItems` / `outfitRecords` 的 `ownerId` 保持一致。
+- `name`：批次显示名称，默认由系统生成（如"5月20日进货批次"），当前不支持用户重命名。
+- `status`：`active` 表示进货中，`closed` 表示已结束并生成执行页。
+- `createdAt`：创建时间，ISO 格式。
+- `closedAt`：关闭时间，`active` 时为 `null`，`closed` 后写入关闭时刻的 ISO 时间。
+
+**与其他集合的关联**：
+
+- `wardrobeItems.batchId`：拍照时写入，标记该件衣服属于哪个批次。
+- `outfitRecords.batchId`：保存搭配时写入，标记该套搭配属于哪个批次。
+- 读取执行页数据时，通过 `batchId` 过滤以上两个集合。
 
 ## 5. 后续 API 接入点
 
@@ -572,17 +656,20 @@ plugins: {
 - `wardrobeItems`
 - `outfitRecords`
 - `userStyleProfiles`
+- `stockBatches`
 
-当前 Demo 建议集合权限先设为“仅创建者可读写”。如果后续做店铺多人协作，再升级为带 `shopId` / `ownerId` 的权限模型。
+当前 Demo 建议集合权限先设为”仅创建者可读写”。`getExecutionBatch` 云函数以管理员权限读取数据，可规避员工端的集合读权限限制。如果后续做店铺多人协作，再升级为带 `shopId` / `ownerId` 的权限模型。
 
 云函数需要在微信开发者工具里上传并部署：
 
+- `login`
 - `recognizeClothing`
 - `transcribeVoice`
 - `extractKeywordsDeepSeek`
 - `extractStylePreference`
+- `getExecutionBatch`
 
-部署后，在每个云函数的环境变量里填写对应 API 字段。不要把真实 API key 写进 Git。
+部署后，在需要外部 API 的云函数环境变量里填写对应字段（`login` 和 `getExecutionBatch` 无需额外配置）。不要把真实 API key 写进 Git。
 
 当前 v1 AI 接入状态：
 
@@ -626,7 +713,7 @@ plugins: {
 14. 录音结束后，前端 Console 出现 `[DeepSeek] extract keywords start` 和 `[DeepSeek] extract keywords response`，云函数日志出现 `[AI] calling EvoLink...`。
 15. 保存搭配后，`outfitRecords.extractedPreferences` 写入本次提取的 `sceneTags`、`styleTags`、`colorTags`、`avoidTags`、`freeText`。
 16. 保存搭配后，`userStyleProfiles` 聚合更新本次偏好标签。
-17. 保存搭配后回到首页。
+17. 保存搭配后回到搭配页（`match` 屏），可直接继续选下一套搭配，不回首页。
 
 ### 9.2 API 接入后验收
 
@@ -648,3 +735,24 @@ plugins: {
 - 不要删除本地 demo fallback，它能保证没有真实数据时仍可演示搭配流程。
 - 不要删除 `unknown` 分类，它是 AI 不稳定时的关键兜底。
 - 不要删除录音数据结构，它是未来个性化推荐的基础。
+- 批次相关字段（`batchId`、`batchName`）已写入 `wardrobeItems` 和 `outfitRecords`，不要删除或重命名。
+
+## 11. 云函数功能速查
+
+| 云函数名 | 触发时机 | 核心功能 | 依赖配置 |
+|---|---|---|---|
+| `login` | 首次进入小程序 / 需要 openId 时 | 从微信上下文取 `OPENID`，返回给前端用于标识用户身份（`ownerId`）。无外部 API 依赖。 | 无 |
+| `recognizeClothing` | 拍照入库后 | 接收 `itemId` 和 `cloudFileId`，通过腾讯云图像识别 `DetectProduct` 识别衣服品类，将 `category`、`categorySource`、`tags`、`name` 写回 `wardrobeItems`。识别失败保持 `unknown`。 | `TIIA_SECRET_ID`、`TIIA_SECRET_KEY`、`TIIA_REGION` |
+| `transcribeVoice` | 录音结束且 WechatSI 插件不可用时（回退路径） | 接收录音文件 `cloudFileId`，调用外部 STT API 转文字，将结果写回 `outfitRecords.transcript`，更新 `aiStatus.stt`。正常情况下 WechatSI 插件在端侧完成识别，此函数被跳过。 | `SPEECH_TO_TEXT_API_URL`、`SPEECH_TO_TEXT_API_KEY` |
+| `extractKeywordsDeepSeek` | 录音识别完成后（主链路） | 接收语音转文字内容（`text`），调用 EvoLink DeepSeek V4 Flash 提取搭配偏好关键词，返回 `sceneTags`、`styleTags`、`colorTags`、`avoidTags`、`freeText`，写入 `outfitRecords.extractedPreferences`。提取失败时前端回退到本地 mock。 | `EVOLINK_API_KEY`、`EVOLINK_API_URL`、`EVOLINK_MODEL` |
+| `extractStylePreference` | 预留，当前主链路不调用 | 旧版偏好提取函数，接收搭配文本和已有画像，调用可配置的风格偏好 API，将结果写回 `outfitRecords.extractedPreferences`。当前由 `extractKeywordsDeepSeek` 替代，保留作为备用接入点。 | `STYLE_PREFERENCE_API_URL`、`STYLE_PREFERENCE_API_KEY` |
+| `getExecutionBatch` | 员工打开执行页时 | 接收 `batchId`，以云函数管理员权限同时查询 `stockBatches`、`wardrobeItems`、`outfitRecords` 三个集合，聚合后返回完整批次数据。解决员工端数据库读权限不足的问题。无外部 API 依赖。 | 无 |
+
+## 12. 数据库集合速查
+
+| 集合名 | 作用 | 读写主体 | 关键关联字段 |
+|---|---|---|---|
+| `wardrobeItems` | 存储所有入库衣服的元数据、分类、标签、搭配次数和文件引用 | 前端（老板端）读写；`recognizeClothing` 云函数更新分类字段 | `batchId`（批次归属）、`outfits`（关联搭配 ID 列表） |
+| `outfitRecords` | 存储每次搭配操作的结果，包含两件单品 ID、录音文件、文字识别结果和偏好关键词 | 前端（老板端）写入；`transcribeVoice`、`extractKeywordsDeepSeek`、`extractStylePreference` 云函数更新 AI 字段 | `batchId`（批次归属）、`itemIds`（涉及的衣服 ID）|
+| `userStyleProfiles` | 存储老板的长期审美画像，每次保存搭配后聚合更新偏好标签计数 | 前端（老板端）读写 | `id`（当前为 `default_${ownerId}`）、`lastOutfitIds`（最近 20 条搭配 ID）|
+| `stockBatches` | 存储每次进货批次的生命周期状态，关联本次进货的所有衣服和搭配 | 前端（老板端）读写；`getExecutionBatch` 云函数只读 | `status`（`active` / `closed`）、`ownerId`（创建者）|
