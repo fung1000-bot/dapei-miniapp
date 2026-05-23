@@ -156,15 +156,15 @@ const clothingCategories: { key: ClothingCategory, label: string }[] = [
 ]
 
 const clothingItems: ClothingItem[] = [
-  { id: 'demo_1', label: '上衣1', tone: 'tone-1', category: 'top' },
-  { id: 'demo_2', label: '上衣2', tone: 'tone-2', category: 'top' },
-  { id: 'demo_3', label: '上衣3', tone: 'tone-3', category: 'top' },
-  { id: 'demo_4', label: '下衣1', tone: 'tone-4', category: 'bottom' },
-  { id: 'demo_5', label: '下衣2', tone: 'tone-5', category: 'bottom' },
-  { id: 'demo_6', label: '连衣裙1', tone: 'tone-6', category: 'dress' },
-  { id: 'demo_7', label: '连衣裙2', tone: 'tone-1', category: 'dress' },
-  { id: 'demo_8', label: '套装1', tone: 'tone-2', category: 'set' },
-  { id: 'demo_9', label: '套装2', tone: 'tone-3', category: 'set' }
+  { id: 'demo_1', label: '白色衬衣', tone: 'tone-1', category: 'top' },
+  { id: 'demo_2', label: '条纹T恤', tone: 'tone-2', category: 'top' },
+  { id: 'demo_3', label: '针织开衫', tone: 'tone-3', category: 'top' },
+  { id: 'demo_4', label: '直筒牛仔裤', tone: 'tone-4', category: 'bottom' },
+  { id: 'demo_5', label: '黑色半裙', tone: 'tone-5', category: 'bottom' },
+  { id: 'demo_6', label: '碎花连衣裙', tone: 'tone-6', category: 'dress' },
+  { id: 'demo_7', label: '气质长裙', tone: 'tone-1', category: 'dress' },
+  { id: 'demo_8', label: '休闲西装套装', tone: 'tone-2', category: 'set' },
+  { id: 'demo_9', label: '运动套装', tone: 'tone-3', category: 'set' }
 ]
 
 const manualCategoryOptions = clothingCategories.filter(category => category.key !== 'unknown')
@@ -1339,7 +1339,6 @@ export default function Index () {
       {screen === 'home' && (
         <View className='home screen'>
           <View className='home__header'>
-            <Text className='eyebrow'>v0.1 · DEMO</Text>
             <Text className='title'>今天{'\n'}搭什么？</Text>
             <Text className='subtext'>衣橱 {catalogItems.length} 件</Text>
           </View>
@@ -1596,7 +1595,7 @@ export default function Index () {
           </View>
           <View className='confirm__header'>
             <Text className='title'>确认这组搭配</Text>
-            <Text className='subtext'>用于用户测试的模拟保存流程</Text>
+            <Text className='subtext'>保存后可在执行页查看搭配结果</Text>
           </View>
 
           <View className='pair-row'>
